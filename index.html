@@ -750,11 +750,15 @@ function pushupCard(){
   const proto = state.phase==='heavy'
     ? `<span class="tagH">● HEAVY</span> · <b>max push-ups in 2:00</b> — your count becomes the new max`
     : `<span class="tagV">● VOLUME</span> · <b>60% of your max reps</b> — maintain, don't max out`;
+  const inputs = state.phase==='heavy'
+    ? `<div class="row2" style="margin-top:11px"><div><label class="field-lab">Push-ups done</label><input type="number" inputmode="numeric" placeholder="0" data-reps></div><div><label class="field-lab">Date</label><input class="datein" type="date" data-date value="${todayISO()}"></div><button class="save">Log</button></div>`
+    : `<div class="runrow" style="grid-template-columns:1fr 1fr 1fr;margin-top:11px"><div><label class="field-lab">Set 1</label><input type="number" inputmode="numeric" placeholder="0" data-s1></div><div><label class="field-lab">Set 2</label><input type="number" inputmode="numeric" placeholder="0" data-s2></div><div><label class="field-lab">Set 3</label><input type="number" inputmode="numeric" placeholder="0" data-s3></div></div>
+       <div class="row2"><div><label class="field-lab">Date</label><input class="datein" type="date" data-date value="${todayISO()}"></div><button class="save">Log</button></div>`;
   card.innerHTML=`<div class="card-top"><div class="ex-name" style="font-size:15px">Bare Minimum</div><div class="badge">2:00 Push-ups</div></div>
     <div class="proto">${proto}</div>
     <div class="timer" data-tdisp>2:00</div>
     <button class="tbtn" data-tstart>Start 2:00</button>
-    <div class="row2" style="margin-top:11px"><div><label class="field-lab">Push-ups done</label><input type="number" inputmode="numeric" placeholder="0" data-reps></div><div><label class="field-lab">Date</label><input class="datein" type="date" data-date value="${todayISO()}"></div><button class="save">Log</button></div>
+    ${inputs}
     <div class="last" data-last></div>
     <div class="hist-toggle"><span>Progress &amp; history</span><span class="arr">▾</span></div><div class="hist"></div>`;
   const disp=card.querySelector('[data-tdisp]'), btn=card.querySelector('[data-tstart]');
@@ -764,10 +768,21 @@ function pushupCard(){
     pushTimer=setInterval(()=>{ t--; disp.textContent=Math.floor(t/60)+':'+String(t%60).padStart(2,'0'); if(t<=0){ clearInterval(pushTimer); pushTimer=null; disp.textContent='DONE'; btn.textContent='Start 2:00'; toast('Time! Log your count'); if(navigator.vibrate) navigator.vibrate([200,100,200]); } },1000);
   };
   card.querySelector('.save').onclick=async()=>{
-    const reps=parseInt(card.querySelector('[data-reps]').value,10); const date=card.querySelector('[data-date]').value||todayISO();
-    if(!(reps>0)){ toast('Enter your count'); return; }
-    const log=await loadLog('pushups'); log.push({date,reps,phase:state.phase}); log.sort((a,b)=>a.date<b.date?1:-1);
-    await sset('log:pushups',log); card.querySelector('[data-reps]').value=''; toast('Saved ✓'); refreshPush(card);
+    const date=card.querySelector('[data-date]').value||todayISO();
+    let entry;
+    if(state.phase==='heavy'){
+      const reps=parseInt(card.querySelector('[data-reps]').value,10);
+      if(!(reps>0)){ toast('Enter your count'); return; }
+      entry={date,reps,phase:'heavy'};
+    } else {
+      const ss=['[data-s1]','[data-s2]','[data-s3]'].map(s=>parseInt(card.querySelector(s).value,10)).filter(v=>v>0);
+      if(!ss.length){ toast('Enter your sets'); return; }
+      entry={date,phase:'volume',sets:ss};
+    }
+    const log=await loadLog('pushups'); log.push(entry); log.sort((a,b)=>a.date<b.date?1:-1);
+    await sset('log:pushups',log);
+    card.querySelectorAll('input[type="number"]').forEach(i=>i.value='');
+    toast('Saved ✓'); refreshPush(card);
   };
   card.querySelector('.hist-toggle').onclick=(e)=>{e.currentTarget.classList.toggle('open');card.querySelector('.hist').classList.toggle('open');state.open['pushups']=card.querySelector('.hist').classList.contains('open');};
   refreshPush(card);
@@ -781,7 +796,7 @@ async function refreshPush(card){
   const mx=maxE?maxE.reps:null;
   if(state.phase==='volume'){
     lastEl.innerHTML = mx!=null
-      ? `Max <b>${mx}</b> → target today: <b>${Math.ceil(mx*0.6)}</b> reps`
+      ? `Max <b>${mx}</b> → target today: <b>3 × ${Math.ceil(mx*0.6)}</b> reps`
       : '<span>No max test yet — do one on a heavy week to set your target.</span>';
   } else {
     lastEl.innerHTML = mx!=null
@@ -794,8 +809,9 @@ async function refreshPush(card){
   if(maxes.length) hist.appendChild(sparkline(maxes,'Max push-ups (2 min, heavy weeks)','#cdff3a'));
   log.slice(0,12).forEach(e=>{
     const ph=(e.phase||'heavy')==='heavy'?'<span class="ph h">H</span>':'<span class="ph v">V</span>';
+    const v = e.sets ? e.sets.join(' / ')+' reps' : e.reps+' reps';
     const row=document.createElement('div');row.className='entry';
-    row.innerHTML=`<div class="dt">${fmtDate(e.date)}${ph}</div><div class="v">${e.reps} reps <span class="delx">×</span></div>`;
+    row.innerHTML=`<div class="dt">${fmtDate(e.date)}${ph}</div><div class="v">${v} <span class="delx">×</span></div>`;
     row.querySelector('.delx').onclick=async()=>{const real=await loadLog('pushups');const i=real.indexOf(e);if(i>-1){real.splice(i,1);await sset('log:pushups',real);refreshPush(card);}};
     hist.appendChild(row);
   });
