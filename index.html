@@ -445,7 +445,10 @@ async function refreshLift(card, ex){
   });
 }
 
-function sparkline(vals, caption, color){
+function sparkline(vals, caption, color, unit){
+  unit = unit || 'kg';
+  const mean = vals.reduce((a,b)=>a+b,0)/vals.length;
+  const avg = Math.round(mean*10)/10;
   const w=320,h=70,pad=8;
   const min=Math.min(...vals),max=Math.max(...vals),rng=(max-min)||1;
   const step=vals.length>1?(w-pad*2)/(vals.length-1):0;
@@ -456,7 +459,7 @@ function sparkline(vals, caption, color){
     dots+=`<circle cx="${x.toFixed(1)}" cy="${y.toFixed(1)}" r="2.5" fill="${color}"/>`;
   });
   const wrap=document.createElement('div'); wrap.className='chart-wrap';
-  wrap.innerHTML=`<div class="chart-cap">${caption} · ${min}→${max} kg</div>
+  wrap.innerHTML=`<div class="chart-cap">${caption} · avg ${avg} · ${min}→${max} ${unit}</div>
     <svg viewBox="0 0 ${w} ${h}" width="100%" preserveAspectRatio="none" style="display:block">
       <path d="${d}" fill="none" stroke="${color}" stroke-width="2" stroke-linejoin="round" stroke-linecap="round"/>
       ${dots}
@@ -521,7 +524,8 @@ async function refreshRun(card, day){
   const hist=card.querySelector('.hist'); hist.innerHTML='';
   if(!log.length){ hist.innerHTML='<div class="empty">Nothing logged yet.</div>'; return; }
   const paces=log.slice().reverse().map(e=>+(e.pace).toFixed(0));
-  hist.appendChild(sparklineRun(paces, 'Pace trend (lower = faster)', '#48d4ff'));
+  const totSec=log.reduce((a,e)=>a+(e.sec||0),0), totKm=log.reduce((a,e)=>a+(e.distance||0),0);
+  hist.appendChild(sparklineRun(paces, 'Pace trend (lower = faster)', '#48d4ff', totKm>0? totSec/totKm : null));
   log.slice(0,12).forEach((e)=>{
     const row=document.createElement('div'); row.className='entry';
     row.innerHTML=`<div class="dt">${fmtDate(e.date)}</div><div class="v">${e.distance}km · ${fmtPace(e.sec)} · ${fmtPace(e.pace)}/km <span class="delx">×</span></div>`;
@@ -529,14 +533,15 @@ async function refreshRun(card, day){
     hist.appendChild(row);
   });
 }
-function sparklineRun(vals, caption, color){
+function sparklineRun(vals, caption, color, avgSec){
   const w=320,h=70,pad=8;
   const min=Math.min(...vals),max=Math.max(...vals),rng=(max-min)||1;
+  const avg = avgSec!=null ? avgSec : vals.reduce((a,b)=>a+b,0)/vals.length;
   const step=vals.length>1?(w-pad*2)/(vals.length-1):0;
   let d='',dots='';
   vals.forEach((v,i)=>{const x=pad+step*i,y=h-pad-((v-min)/rng)*(h-pad*2);d+=(i?'L':'M')+x.toFixed(1)+' '+y.toFixed(1)+' ';dots+=`<circle cx="${x.toFixed(1)}" cy="${y.toFixed(1)}" r="2.5" fill="${color}"/>`;});
   const wrap=document.createElement('div');wrap.className='chart-wrap';
-  wrap.innerHTML=`<div class="chart-cap">${caption} · ${fmtPace(min)}→${fmtPace(max)} /km</div>
+  wrap.innerHTML=`<div class="chart-cap">${caption} · avg ${fmtPace(avg)}/km · ${fmtPace(min)}→${fmtPace(max)} /km</div>
     <svg viewBox="0 0 ${w} ${h}" width="100%" preserveAspectRatio="none" style="display:block"><path d="${d}" fill="none" stroke="${color}" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>${dots}</svg>`;
   return wrap;
 }
@@ -666,7 +671,8 @@ async function renderExtraHist(box){
       if(vals.length>=2) card.appendChild(sparkline(vals,'Top set weight','#cdff3a'));
     } else {
       const vals=items.slice().reverse().map(e=>+(e.pace).toFixed(0));
-      if(vals.length>=2) card.appendChild(sparklineRun(vals,'Pace trend (lower = faster)','#48d4ff'));
+      const tS=items.reduce((a,e)=>a+(e.sec||0),0), tK=items.reduce((a,e)=>a+(e.distance||0),0);
+      if(vals.length>=2) card.appendChild(sparklineRun(vals,'Pace trend (lower = faster)','#48d4ff', tK>0? tS/tK : null));
     }
     items.slice(0,12).forEach(e=>{
       const row=document.createElement('div');row.className='entry';
@@ -739,7 +745,7 @@ async function refreshTime(card,day){
   card.querySelector('[data-tf]').style.width=Math.min(100,todayMins/45*100)+'%';
   const hist=card.querySelector('.hist'); hist.innerHTML='';
   if(!log.length){hist.innerHTML='<div class="empty">No times logged yet.</div>';return;}
-  hist.appendChild(sparkline(log.slice().reverse().map(e=>e.mins),'Minutes per session','#cdff3a'));
+  hist.appendChild(sparkline(log.slice().reverse().map(e=>e.mins),'Minutes per session','#cdff3a','min'));
   log.slice(0,12).forEach(e=>{const row=document.createElement('div');row.className='entry';row.innerHTML=`<div class="dt">${fmtDate(e.date)}</div><div class="v">${e.mins} min <span class="delx">×</span></div>`;row.querySelector('.delx').onclick=async()=>{const real=await loadLog('time:'+day.id);const i=real.indexOf(e);if(i>-1){real.splice(i,1);await sset('log:time:'+day.id,real);refreshTime(card,day);}};hist.appendChild(row);});
 }
 
@@ -806,7 +812,7 @@ async function refreshPush(card){
   const hist=card.querySelector('.hist'); hist.innerHTML='';
   if(!log.length){hist.innerHTML='<div class="empty">Nothing logged yet.</div>';return;}
   const maxes=log.filter(e=>(e.phase||'heavy')==='heavy').slice().reverse().map(e=>e.reps);
-  if(maxes.length) hist.appendChild(sparkline(maxes,'Max push-ups (2 min, heavy weeks)','#cdff3a'));
+  if(maxes.length) hist.appendChild(sparkline(maxes,'Max push-ups (2 min, heavy weeks)','#cdff3a','reps'));
   log.slice(0,12).forEach(e=>{
     const ph=(e.phase||'heavy')==='heavy'?'<span class="ph h">H</span>':'<span class="ph v">V</span>';
     const v = e.sets ? e.sets.join(' / ')+' reps' : e.reps+' reps';
