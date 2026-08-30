@@ -284,7 +284,7 @@ function protoText(ex){
   return `<span class="tagV">● VOLUME</span> · <b>3 × 10 @ 60% of max</b> · get all 3×10 → max +5kg next heavy · miss → repeat`;
 }
 
-function round5(x){ return Math.ceil(x/5)*5; }
+function round5(x){ return Math.round(x/5)*5; }
 function volSuccess(entry){ return (entry.sets||[]).filter(s=>s.reps!=null&&s.reps>=10).length>=3; }
 function currentMax(log){
   const lastH=log.find(e=>e.phase==='heavy'&&bestSet(e));
