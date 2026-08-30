@@ -459,8 +459,10 @@ function sparkline(vals, caption, color, unit){
     dots+=`<circle cx="${x.toFixed(1)}" cy="${y.toFixed(1)}" r="2.5" fill="${color}"/>`;
   });
   const wrap=document.createElement('div'); wrap.className='chart-wrap';
+  const yAvg=(h-pad-((Math.min(Math.max(avg,min),max)-min)/rng)*(h-pad*2)).toFixed(1);
   wrap.innerHTML=`<div class="chart-cap">${caption} · avg ${avg} · ${min}→${max} ${unit}</div>
     <svg viewBox="0 0 ${w} ${h}" width="100%" preserveAspectRatio="none" style="display:block">
+      <line x1="${pad}" x2="${w-pad}" y1="${yAvg}" y2="${yAvg}" stroke="${color}" stroke-width="1" stroke-dasharray="4 4" opacity="0.4"/>
       <path d="${d}" fill="none" stroke="${color}" stroke-width="2" stroke-linejoin="round" stroke-linecap="round"/>
       ${dots}
     </svg>`;
@@ -541,8 +543,9 @@ function sparklineRun(vals, caption, color, avgSec){
   let d='',dots='';
   vals.forEach((v,i)=>{const x=pad+step*i,y=h-pad-((v-min)/rng)*(h-pad*2);d+=(i?'L':'M')+x.toFixed(1)+' '+y.toFixed(1)+' ';dots+=`<circle cx="${x.toFixed(1)}" cy="${y.toFixed(1)}" r="2.5" fill="${color}"/>`;});
   const wrap=document.createElement('div');wrap.className='chart-wrap';
+  const yAvg=(h-pad-((Math.min(Math.max(avg,min),max)-min)/rng)*(h-pad*2)).toFixed(1);
   wrap.innerHTML=`<div class="chart-cap">${caption} · avg ${fmtPace(avg)}/km · ${fmtPace(min)}→${fmtPace(max)} /km</div>
-    <svg viewBox="0 0 ${w} ${h}" width="100%" preserveAspectRatio="none" style="display:block"><path d="${d}" fill="none" stroke="${color}" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>${dots}</svg>`;
+    <svg viewBox="0 0 ${w} ${h}" width="100%" preserveAspectRatio="none" style="display:block"><line x1="${pad}" x2="${w-pad}" y1="${yAvg}" y2="${yAvg}" stroke="${color}" stroke-width="1" stroke-dasharray="4 4" opacity="0.4"/><path d="${d}" fill="none" stroke="${color}" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>${dots}</svg>`;
   return wrap;
 }
 
