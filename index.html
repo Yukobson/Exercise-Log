@@ -200,8 +200,8 @@ const DAYS = [
   ]},
   {id:'tue', short:'Tue', name:'Tuesday',   focus:'Run / Hike',             type:'run'},
   {id:'wed', short:'Wed', name:'Wednesday', focus:'Full Body B',            type:'lift', exercises:[
-    {id:'legext',  name:'Leg Extension',          compound:false},
-    {id:'legcurl', name:'Leg Curl',               compound:false},
+    {id:'legext',  name:'Leg Extension (each leg)', compound:false, uni:true},
+    {id:'legcurl', name:'Leg Curl (each leg)',      compound:false, uni:true},
     {id:'dips',    name:'Weighted Dips',          compound:true, bw:true},
     {id:'row',     name:'Seated Cable Row',       compound:true},
     {id:'latraise',name:'Lateral Raise',          compound:false},
@@ -279,16 +279,16 @@ function renderDays(){
 // ---------- content ----------
 function setCount(ex){ return 3; }
 function protoText(ex){
-  if(!ex.compound) return `<b>Isolation</b> · 3 sets · 8–12 reps · ~1 min rest · +5kg when it's easy`;
-  if(state.phase==='heavy') return `<span class="tagH">● HEAVY</span> · build up, then <b>top set: 3 reps @ max</b> · hit it → max +5kg · miss → repeat`;
-  return `<span class="tagV">● VOLUME</span> · <b>3 × 10 @ 60% of max</b> · get all 3×10 → max +5kg next heavy · miss → repeat`;
+  const uni = ex.uni ? `<b>One leg at a time</b>, same weight · reps per leg · ` : '';
+  if(state.phase==='heavy') return `${uni}<span class="tagH">● HEAVY</span> · build up, then <b>top set: 3 reps @ max</b> · hit it → max +5kg · miss → repeat`;
+  return `${uni}<span class="tagV">● VOLUME</span> · <b>3 × 10 @ 60% of max</b> · get all 3×10 → max +5kg next heavy · miss → repeat`;
 }
 
 function round5(x){ return Math.round(x/5)*5; }
 function volSuccess(entry){ return (entry.sets||[]).filter(s=>s.reps!=null&&s.reps>=10).length>=3; }
 function currentMax(log){
   const lastH=log.find(e=>e.phase==='heavy'&&bestSet(e));
-  const lastV=log.find(e=>e.phase==='volume'&&bestSet(e));
+  const lastV=log.find(e=>(e.phase==='volume'||e.phase==='iso')&&bestSet(e));
   if(!lastH&&!lastV) return null;
   let M = lastH ? bestSet(lastH).w : round5(bestSet(lastV).w/0.6);
   if(!(M>0)) return null;
@@ -314,7 +314,7 @@ function liftCard(ex){
   let setsHtml='';
   for(let i=0;i<n;i++){
     let label=(i+1)+'', cls='';
-    if(ex.compound && state.phase==='heavy' && i===2){ label='TOP'; cls=' topset'; }
+    if(state.phase==='heavy' && i===2){ label='TOP'; cls=' topset'; }
     setsHtml+=`<div class="setrow${cls}">
       <div class="n">${label}</div>
       <div><input type="number" inputmode="decimal" placeholder="kg" data-f="w" data-i="${i}"></div>
@@ -328,7 +328,7 @@ function liftCard(ex){
       <div class="badge ${ex.compound?'comp':''}">${ex.compound?'Compound':'Isolation'}</div>
     </div>
     <div class="proto">${protoText(ex)}</div>
-    ${ex.compound?'<div class="sugg" data-sugg></div>':''}
+    <div class="sugg" data-sugg></div>
     <div class="last" data-last></div>
     ${ex.bw?`<div class="bwrow"><label class="field-lab">Bodyweight kg (for load calc)</label><input type="number" inputmode="decimal" placeholder="auto from weigh-in" data-bw></div>`:''}
     <div class="sets">${setsHtml}</div>
@@ -362,7 +362,7 @@ function liftCard(ex){
       if(!isNaN(w)||!isNaN(reps)) sets.push({w:isNaN(w)?null:w, reps:isNaN(reps)?null:reps});
     });
     if(!sets.length){ toast('Enter a set first'); return; }
-    const entry={date, phase: ex.compound?state.phase:'iso', sets};
+    const entry={date, phase: state.phase, sets};
     const bwEl=card.querySelector('[data-bw]'); if(bwEl){ const bw=parseFloat(bwEl.value); if(!isNaN(bw)) entry.bw=bw; }
     const log=await loadLog(ex.id);
     log.push(entry);
@@ -411,22 +411,21 @@ async function refreshLift(card, ex){
       suggEl.innerHTML=`🎯 No data yet — Heavy week: work up to a 3-rep max. Volume week: 3×10 at roughly 60% of that. Your first log sets the baseline.`;
     }
   }
-  // "last" hint — for compounds compare same phase
+  // "last" hint — compare same phase
   const lastEl=card.querySelector('[data-last]');
-  const rel = ex.compound ? log.filter(e=>e.phase===state.phase) : log;
+  const rel = log.filter(e=>e.phase===state.phase);
   if(rel.length){
     const b=bestSet(rel[0]);
-    if(b) lastEl.innerHTML=`<span>Last ${ex.compound?state.phase:''} top set:</span> ${b.w}kg × ${b.reps??'–'} <span>(${fmtDate(rel[0].date)})</span>`;
+    if(b) lastEl.innerHTML=`<span>Last ${state.phase} top set:</span> ${b.w}kg × ${b.reps??'–'} <span>(${fmtDate(rel[0].date)})</span>`;
     else lastEl.textContent='';
   } else { lastEl.innerHTML='<span>No history yet — set the baseline.</span>'; }
 
   const hist=card.querySelector('.hist');
   hist.innerHTML='';
   if(!log.length){ hist.innerHTML='<div class="empty">Nothing logged yet.</div>'; return; }
-  // chart: top-set weight over time, per relevant series
-  const series = ex.compound
-    ? [{label:'Heavy top set', ph:'heavy', col:'#ff7a3c'},{label:'Volume top set', ph:'volume', col:'#48d4ff'}]
-    : [{label:'Top set weight', ph:'iso', col:'#cdff3a'}];
+  // chart: top-set weight over time, per phase (plus legacy pre-rule entries if any)
+  const series = [{label:'Heavy top set', ph:'heavy', col:'#ff7a3c'},{label:'Volume top set', ph:'volume', col:'#48d4ff'}];
+  if(log.some(e=>e.phase==='iso')) series.push({label:'Earlier sets (pre-rule)', ph:'iso', col:'#cdff3a'});
   series.forEach(se=>{
     const pts=log.filter(e=>e.phase===se.ph).slice().reverse().map(e=>{const b=bestSet(e);return b?b.w:null;}).filter(v=>v!=null);
     if(pts.length>=1){ hist.appendChild(sparkline(pts, se.label, se.col)); }
