@@ -107,6 +107,7 @@
   .setrow{display:grid;grid-template-columns:30px 1fr 1fr 28px;gap:7px;align-items:center;}
   .setrow .n{font-family:"JetBrains Mono",monospace;font-size:11px;color:var(--muted);text-align:center;}
   .setrow.drop .n{color:var(--volume);}
+  .setrow.uni{grid-template-columns:30px 1.1fr 1fr 1fr 28px;}
   .setrow.topset .n{color:var(--acid);font-weight:700;}
   .sugg{margin-top:10px;background:#11140b;border:1px solid var(--acid-dim);border-radius:10px;padding:9px 11px;font-family:"JetBrains Mono",monospace;font-size:11px;line-height:1.5;color:var(--muted);}
   .sugg b{color:var(--acid);font-weight:500;}
@@ -202,9 +203,9 @@ const DAYS = [
   {id:'wed', short:'Wed', name:'Wednesday', focus:'Full Body B',            type:'lift', exercises:[
     {id:'legext',  name:'Leg Extension (each leg)', compound:false, uni:true},
     {id:'legcurl', name:'Leg Curl (each leg)',      compound:false, uni:true},
-    {id:'dips',    name:'Weighted Dips',          compound:true, bw:true},
+    {id:'dipmach', name:'Dip Machine (seated)',   compound:true},
     {id:'row',     name:'Seated Cable Row',       compound:true},
-    {id:'latraise',name:'Lateral Raise',          compound:false},
+    {id:'latraise',name:'Lateral Raise',          compound:false, variants:[{key:'db',label:'Dumbbell',id:'latraise'},{key:'cable',label:'Cable',id:'latraise_cable'}]},
   ]},
   {id:'thu', short:'Thu', name:'Thursday',  focus:'Run / Hike',             type:'run'},
   {id:'fri', short:'Fri', name:'Friday',    focus:'Full Body C',            type:'lift', exercises:[
@@ -234,7 +235,9 @@ async function sset(key,val){
 }
 
 // ---------- state ----------
-let state = { phase:'heavy', active:null, open:{} };
+let state = { phase:'heavy', active:null, open:{}, variant:{} };
+function logIdFor(ex){ if(!ex.variants) return ex.id; const key=state.variant[ex.id]||ex.variants[0].key; const v=ex.variants.find(x=>x.key===key)||ex.variants[0]; return v.id; }
+async function saveSettings(){ await sset('settings',{phase:state.phase, variant:state.variant}); }
 const logCache = {};
 async function loadLog(id){
   if(logCache[id]) return logCache[id];
@@ -285,7 +288,7 @@ function protoText(ex){
 }
 
 function round5(x){ return Math.round(x/5)*5; }
-function volSuccess(entry){ return (entry.sets||[]).filter(s=>s.reps!=null&&s.reps>=10).length>=3; }
+function volSuccess(entry){ return (entry.sets||[]).filter(s=>{ const r=effReps(s); return r!=null&&r>=10; }).length>=3; }
 function currentMax(log){
   const lastH=log.find(e=>e.phase==='heavy'&&bestSet(e));
   const lastV=log.find(e=>(e.phase==='volume'||e.phase==='iso')&&bestSet(e));
@@ -311,23 +314,29 @@ function liftCard(ex){
   const card=document.createElement('div');
   card.className='card'+(ex.compound?' comp':'');
   const n=setCount(ex);
+  const rowInputs=(i)=> ex.uni
+    ? `<div><input type="number" inputmode="decimal" placeholder="kg" data-f="w" data-i="${i}"></div>
+       <div><input type="number" inputmode="numeric" placeholder="L reps" data-f="r" data-i="${i}"></div>
+       <div><input type="number" inputmode="numeric" placeholder="R reps" data-f="rr" data-i="${i}"></div>`
+    : `<div><input type="number" inputmode="decimal" placeholder="kg" data-f="w" data-i="${i}"></div>
+       <div><input type="number" inputmode="numeric" placeholder="reps" data-f="r" data-i="${i}"></div>`;
   let setsHtml='';
   for(let i=0;i<n;i++){
     let label=(i+1)+'', cls='';
     if(state.phase==='heavy' && i===2){ label='TOP'; cls=' topset'; }
-    setsHtml+=`<div class="setrow${cls}">
+    setsHtml+=`<div class="setrow${ex.uni?' uni':''}${cls}">
       <div class="n">${label}</div>
-      <div><input type="number" inputmode="decimal" placeholder="kg" data-f="w" data-i="${i}"></div>
-      <div><input type="number" inputmode="numeric" placeholder="reps" data-f="r" data-i="${i}"></div>
+      ${rowInputs(i)}
       <button class="rm" title="remove">×</button>
     </div>`;
   }
   card.innerHTML=`
     <div class="card-top">
       <div class="ex-name">${ex.name}</div>
-      <div class="badge ${ex.compound?'comp':''}">${ex.compound?'Compound':'Isolation'}</div>
+      <div class="badge ${ex.compound?'comp':''}">${ex.compound?'Compound':(ex.uni?'Single leg':'Isolation')}</div>
     </div>
     <div class="proto">${protoText(ex)}</div>
+    ${ex.variants?`<div class="seg mini" data-varseg style="margin-top:10px">${ex.variants.map(v=>`<button data-k="${v.key}" class="${logIdFor(ex)===v.id?'on':''}">${v.label}</button>`).join('')}</div>`:''}
     <div class="sugg" data-sugg></div>
     <div class="last" data-last></div>
     ${ex.bw?`<div class="bwrow"><label class="field-lab">Bodyweight kg (for load calc)</label><input type="number" inputmode="decimal" placeholder="auto from weigh-in" data-bw></div>`:''}
@@ -341,13 +350,12 @@ function liftCard(ex){
     <div class="hist"></div>`;
 
   const setsEl=card.querySelector('.sets');
+  const vseg=card.querySelector('[data-varseg]');
+  if(vseg) vseg.querySelectorAll('button').forEach(b=>b.onclick=async()=>{ state.variant[ex.id]=b.dataset.k; await saveSettings(); render(); });
   card.querySelector('.addset').onclick=()=>{
     const i=setsEl.children.length;
-    const row=document.createElement('div'); row.className='setrow';
-    row.innerHTML=`<div class="n">${i+1}</div>
-      <div><input type="number" inputmode="decimal" placeholder="kg" data-f="w" data-i="${i}"></div>
-      <div><input type="number" inputmode="numeric" placeholder="reps" data-f="r" data-i="${i}"></div>
-      <button class="rm">×</button>`;
+    const row=document.createElement('div'); row.className='setrow'+(ex.uni?' uni':'');
+    row.innerHTML=`<div class="n">${i+1}</div>${rowInputs(i)}<button class="rm">×</button>`;
     row.querySelector('.rm').onclick=()=>{row.remove();renumber(setsEl);};
     setsEl.appendChild(row);
   };
@@ -359,15 +367,21 @@ function liftCard(ex){
     setsEl.querySelectorAll('.setrow').forEach(r=>{
       const w=parseFloat(r.querySelector('[data-f="w"]').value);
       const reps=parseInt(r.querySelector('[data-f="r"]').value,10);
-      if(!isNaN(w)||!isNaN(reps)) sets.push({w:isNaN(w)?null:w, reps:isNaN(reps)?null:reps});
+      const rrEl=r.querySelector('[data-f="rr"]'); const repsR=rrEl?parseInt(rrEl.value,10):NaN;
+      if(!isNaN(w)||!isNaN(reps)||!isNaN(repsR)){
+        const s={w:isNaN(w)?null:w, reps:isNaN(reps)?null:reps};
+        if(ex.uni) s.repsR=isNaN(repsR)?null:repsR;
+        sets.push(s);
+      }
     });
     if(!sets.length){ toast('Enter a set first'); return; }
     const entry={date, phase: state.phase, sets};
     const bwEl=card.querySelector('[data-bw]'); if(bwEl){ const bw=parseFloat(bwEl.value); if(!isNaN(bw)) entry.bw=bw; }
-    const log=await loadLog(ex.id);
+    const lid=logIdFor(ex);
+    const log=await loadLog(lid);
     log.push(entry);
     log.sort((a,b)=>a.date<b.date?1:-1);
-    await sset('log:'+ex.id, log);
+    await sset('log:'+lid, log);
     setsEl.querySelectorAll('input').forEach(i=>i.value='');
     toast('Saved ✓');
     refreshLift(card, ex);
@@ -376,24 +390,28 @@ function liftCard(ex){
   card.querySelector('.hist-toggle').onclick=(e)=>{
     const t=e.currentTarget, h=card.querySelector('.hist');
     t.classList.toggle('open'); h.classList.toggle('open');
-    state.open[ex.id]=h.classList.contains('open');
+    state.open[logIdFor(ex)]=h.classList.contains('open');
   };
 
   refreshLift(card, ex);
-  if(state.open[ex.id]){ card.querySelector('.hist-toggle').classList.add('open'); card.querySelector('.hist').classList.add('open'); }
+  if(state.open[logIdFor(ex)]){ card.querySelector('.hist-toggle').classList.add('open'); card.querySelector('.hist').classList.add('open'); }
   return card;
 }
 
 function renumber(setsEl){ [...setsEl.children].forEach((r,i)=>{ if(!r.classList.contains('drop')) r.querySelector('.n').textContent=i+1; }); }
 
-function bestSet(entry){ // max weight set; tie-break reps
+function effReps(s){ if(s.repsR!=null && s.reps!=null) return Math.min(s.reps,s.repsR); return s.reps!=null? s.reps : s.repsR; }
+function fmtSet(s){ const r = s.repsR!=null ? `${s.reps??'–'}/${s.repsR??'–'}` : `${s.reps??'–'}`; return `${s.w??'–'}×${r}`; }
+function bestSet(entry){ // max weight set; tie-break on effective reps (weaker leg for single-leg)
   let best=null;
-  entry.sets.forEach(s=>{ if(s.w==null) return; if(!best|| s.w>best.w || (s.w===best.w && (s.reps||0)>(best.reps||0))) best=s; });
-  return best;
+  entry.sets.forEach(s=>{ if(s.w==null) return; if(!best|| s.w>best.w || (s.w===best.w && (effReps(s)||0)>(effReps(best)||0))) best=s; });
+  if(!best) return null;
+  return Object.assign({}, best, {reps: effReps(best), repsL: best.reps});
 }
 
 async function refreshLift(card, ex){
-  const log=await loadLog(ex.id);
+  const lid=logIdFor(ex);
+  const log=await loadLog(lid);
   // suggestions / prediction (compounds only)
   const suggEl=card.querySelector('[data-sugg]');
   if(suggEl){
@@ -416,7 +434,7 @@ async function refreshLift(card, ex){
   const rel = log.filter(e=>e.phase===state.phase);
   if(rel.length){
     const b=bestSet(rel[0]);
-    if(b) lastEl.innerHTML=`<span>Last ${state.phase} top set:</span> ${b.w}kg × ${b.reps??'–'} <span>(${fmtDate(rel[0].date)})</span>`;
+    if(b) lastEl.innerHTML=`<span>Last ${state.phase} top set:</span> ${b.w}kg × ${b.repsR!=null?`${b.repsL??'–'}/${b.repsR??'–'} <span>L/R</span>`:(b.reps??'–')} <span>(${fmtDate(rel[0].date)})</span>`;
     else lastEl.textContent='';
   } else { lastEl.innerHTML='<span>No history yet — set the baseline.</span>'; }
 
@@ -436,9 +454,9 @@ async function refreshLift(card, ex){
     const phc = e.phase==='heavy'?'<span class="ph h">H</span>':e.phase==='volume'?'<span class="ph v">V</span>':'';
     const row=document.createElement('div'); row.className='entry';
     row.innerHTML=`<div class="dt">${fmtDate(e.date)}${phc}</div>
-      <div class="v">${e.sets.map(s=>`${s.w??'–'}×${s.reps??'–'}`).join('  ')} <span class="delx">×</span></div>`;
+      <div class="v">${e.sets.map(fmtSet).join('  ')} <span class="delx">×</span></div>`;
     row.querySelector('.delx').onclick=async()=>{
-      const real=await loadLog(ex.id); const i=real.indexOf(e); if(i>-1){real.splice(i,1); await sset('log:'+ex.id, real); refreshLift(card,ex);}
+      const real=await loadLog(lid); const i=real.indexOf(e); if(i>-1){real.splice(i,1); await sset('log:'+lid, real); refreshLift(card,ex);}
     };
     hist.appendChild(row);
   });
@@ -678,7 +696,7 @@ async function renderExtraHist(box){
     }
     items.slice(0,12).forEach(e=>{
       const row=document.createElement('div');row.className='entry';
-      const v = g.kind==='strength' ? e.sets.map(s=>`${s.w??'–'}×${s.reps??'–'}`).join('  ') : `${e.distance}km · ${fmtPace(e.sec)} · ${fmtPace(e.pace)}/km`;
+      const v = g.kind==='strength' ? e.sets.map(fmtSet).join('  ') : `${e.distance}km · ${fmtPace(e.sec)} · ${fmtPace(e.pace)}/km`;
       row.innerHTML=`<div class="dt">${fmtDate(e.date)}</div><div class="v">${v} <span class="delx">×</span></div>`;
       row.querySelector('.delx').onclick=async()=>{const real=await loadLog('extra');const i=real.indexOf(e);if(i>-1){real.splice(i,1);await sset('log:extra',real);renderExtraHist(box);}};
       card.appendChild(row);
@@ -702,7 +720,7 @@ async function populateWeek(card){
   const dates={};
   DAY_ORDER.forEach((id,i)=>{ const d=new Date(startD); d.setDate(startD.getDate()+i); dates[id]=isoLocal(d); });
   // any training logged on a given date counts, regardless of which day's plan it came from
-  const allKeys=[]; DAYS.forEach(d=>{ if(d.exercises) d.exercises.forEach(e=>allKeys.push(e.id)); });
+  const allKeys=[]; DAYS.forEach(d=>{ if(d.exercises) d.exercises.forEach(e=>{ allKeys.push(e.id); if(e.variants) e.variants.forEach(v=>allKeys.push(v.id)); }); });
   allKeys.push('run','sat','pushups','extra');
   const activeDates=new Set();
   for(const k of allKeys){ const lg=await loadLog(k); lg.forEach(e=>{ if(e.date) activeDates.add(e.date); }); }
@@ -862,11 +880,11 @@ function render(){
 }
 
 document.querySelectorAll('#seg button').forEach(b=>{
-  b.onclick=async()=>{ state.phase=b.dataset.p; await sset('settings',{phase:state.phase}); render(); };
+  b.onclick=async()=>{ state.phase=b.dataset.p; await saveSettings(); render(); };
 });
 
 (async function init(){
-  const s=await sget('settings'); if(s&&s.phase) state.phase=s.phase;
+  const s=await sget('settings'); if(s&&s.phase) state.phase=s.phase; if(s&&s.variant) state.variant=s.variant;
   // one-time migration: fold old Tue (long run) & Thu (sprints) histories into the unified run log
   const runs=await loadLog('run');
   if(!runs.length){
