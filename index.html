@@ -108,6 +108,7 @@
   .setrow .n{font-family:"JetBrains Mono",monospace;font-size:11px;color:var(--muted);text-align:center;}
   .setrow.drop .n{color:var(--volume);}
   .setrow.uni{grid-template-columns:30px 1.1fr 1fr 1fr 28px;}
+  .setrow.trk{grid-template-columns:30px 1fr 28px;}
   .setrow.topset .n{color:var(--acid);font-weight:700;}
   .sugg{margin-top:10px;background:#11140b;border:1px solid var(--acid-dim);border-radius:10px;padding:9px 11px;font-family:"JetBrains Mono",monospace;font-size:11px;line-height:1.5;color:var(--muted);}
   .sugg b{color:var(--acid);font-weight:500;}
@@ -203,15 +204,24 @@ const DAYS = [
   {id:'wed', short:'Wed', name:'Wednesday', focus:'Full Body B',            type:'lift', exercises:[
     {id:'legext',  name:'Leg Extension (each leg)', compound:false, uni:true},
     {id:'legcurl', name:'Leg Curl (each leg)',      compound:false, uni:true},
-    {id:'dipmach', name:'Dip Machine (seated)',   compound:true},
+    {id:'dipmach', name:'Dips',                   compound:true, variants:[
+      {key:'machine', label:'Machine',   id:'dipmach',   mode:'lift',  inc:5},
+      {key:'neg',     label:'Negatives', id:'dips_neg',  mode:'track', unit:'reps', hint:'Press up to the top (or step up), lower slowly (3–5 s). Log reps per set.'},
+      {key:'hold',    label:'Holds',     id:'dips_hold', mode:'track', unit:'sec',  hint:'Lock out at the top (or hold the bottom) and hold. Log seconds per set.'},
+      {key:'full',    label:'Dips',      id:'dips_bw',   mode:'track', unit:'reps', hint:'Full bodyweight dips, no added weight. Log reps per set.'},
+    ]},
     {id:'row',     name:'Seated Cable Row',       compound:true},
-    {id:'latraise',name:'Lateral Raise',          compound:false, variants:[{key:'db',label:'Dumbbell',id:'latraise'},{key:'cable',label:'Cable',id:'latraise_cable'}]},
+    {id:'latraise',name:'Lateral Raise',          compound:false, variants:[{key:'db',label:'Dumbbell',id:'latraise',inc:1},{key:'cable',label:'Cable',id:'latraise_cable',inc:5}]},
   ]},
   {id:'thu', short:'Thu', name:'Thursday',  focus:'Run / Hike',             type:'run'},
   {id:'fri', short:'Fri', name:'Friday',    focus:'Full Body C',            type:'lift', exercises:[
     {id:'dead',    name:'Deadlift',               compound:true},
     {id:'fly',     name:'Chest Fly',              compound:false},
-    {id:'pullup',  name:'Pull-ups',               compound:true, bw:true},
+    {id:'pullup',  name:'Pull-ups',               track:true, variants:[
+      {key:'neg',  label:'Negatives', id:'pullup_neg',  unit:'reps', hint:'Jump or step to the top, lower yourself slowly (3–5 s). Log reps per set.'},
+      {key:'hold', label:'Holds',     id:'pullup_hold', unit:'sec',  hint:'Chin over the bar and hold. Log seconds per set.'},
+      {key:'full', label:'Pull-ups',  id:'pullup',      unit:'reps', hint:'Full pull-ups, bodyweight only. Log reps per set.'},
+    ]},
     {id:'facepull',name:'Face Pulls',             compound:false},
     {id:'calf',    name:'Calf Raise',             compound:false},
   ]},
@@ -282,49 +292,48 @@ function renderDays(){
 // ---------- content ----------
 function setCount(ex){ return 3; }
 function protoText(ex){
-  const uni = ex.uni ? `<b>One leg at a time</b>, same weight · reps per leg · ` : '';
-  if(state.phase==='heavy') return `${uni}<span class="tagH">● HEAVY</span> · build up, then <b>top set: 3 reps @ max</b> · hit it → max +5kg · miss → repeat`;
-  return `${uni}<span class="tagV">● VOLUME</span> · <b>3 × 10 @ 60% of max</b> · get all 3×10 → max +5kg next heavy · miss → repeat`;
+  const inc=incFor(ex);
+  const uni = ex.uni ? `<b>One leg at a time</b> · same weight &amp; reps each leg · log the <b>per-leg</b> weight (not doubled) · ` : '';
+  if(state.phase==='heavy') return `${uni}<span class="tagH">● HEAVY</span> · build up, then <b>top set: 3 reps @ max</b> · hit it → max +${inc}kg · miss → repeat`;
+  return `${uni}<span class="tagV">● VOLUME</span> · <b>3 × 10 @ 60% of max</b> · get all 3×10 → max +${inc}kg next heavy · miss → repeat`;
 }
 
-function round5(x){ return Math.round(x/5)*5; }
+function incFor(ex){ if(ex.variants){ const key=state.variant[ex.id]||ex.variants[0].key; const v=ex.variants.find(x=>x.key===key)||ex.variants[0]; if(v.inc) return v.inc; } return ex.inc||5; }
+function roundTo(x,inc){ inc=inc||5; return Math.round(x/inc)*inc; }
 function volSuccess(entry){ return (entry.sets||[]).filter(s=>{ const r=effReps(s); return r!=null&&r>=10; }).length>=3; }
-function currentMax(log){
+function currentMax(log, inc){
+  inc=inc||5;
   const lastH=log.find(e=>e.phase==='heavy'&&bestSet(e));
   const lastV=log.find(e=>(e.phase==='volume'||e.phase==='iso')&&bestSet(e));
   if(!lastH&&!lastV) return null;
-  let M = lastH ? bestSet(lastH).w : round5(bestSet(lastV).w/0.6);
+  let M = lastH ? bestSet(lastH).w : roundTo(bestSet(lastV).w/0.6, inc);
   if(!(M>0)) return null;
   const recent = !lastV ? lastH : (!lastH ? lastV : (lastH.date>=lastV.date ? lastH : lastV));
-  let inc=false;
-  if(recent.phase==='heavy'){ const t=bestSet(recent); inc = !!(t && t.reps!=null && t.reps>=3); }
-  else { inc = volSuccess(recent); }
-  return { max: inc ? M+5 : M, incremented: inc };
+  let ok=false;
+  if(recent.phase==='heavy'){ const t=bestSet(recent); ok = !!(t && t.reps!=null && t.reps>=3); }
+  else { ok = volSuccess(recent); }
+  return { max: ok ? M+inc : M, incremented: ok, inc };
 }
 function suggestSets(mx){
-  const M=mx.max, w60=Math.max(5,round5(M*0.6));
-  const tag = mx.incremented ? ' <b>(+5 ✓)</b>' : '';
+  const M=mx.max, inc=mx.inc||5, w60=Math.max(inc,roundTo(M*0.6,inc)), w80=roundTo(M*0.8,inc);
+  const tag = mx.incremented ? ` <b>(+${inc} ✓)</b>` : '';
   if(state.phase==='heavy'){
-    return { line:`Max <b>${M}kg</b>${tag} · build ${round5(M*0.6)} → ${round5(M*0.8)} → <b>top ${M}kg × 3</b> · hit it → next max ${M+5}kg`, per:[round5(M*0.6),round5(M*0.8),M] };
+    return { line:`Max <b>${M}kg</b>${tag} · build ${w60} → ${w80} → <b>top ${M}kg × 3</b> · hit it → next max ${M+inc}kg`, per:[w60,w80,M] };
   }
-  return { line:`Max <b>${M}kg</b>${tag} · <b>3 × 10 @ ${w60}kg</b> (60%) · all 3×10 → max ${M+5}kg next heavy`, per:[w60,w60,w60] };
+  return { line:`Max <b>${M}kg</b>${tag} · <b>3 × 10 @ ${w60}kg</b> (60%) · all 3×10 → max ${M+inc}kg next heavy`, per:[w60,w60,w60] };
 }
 
 function liftCard(ex){
   const card=document.createElement('div');
   card.className='card'+(ex.compound?' comp':'');
   const n=setCount(ex);
-  const rowInputs=(i)=> ex.uni
-    ? `<div><input type="number" inputmode="decimal" placeholder="kg" data-f="w" data-i="${i}"></div>
-       <div><input type="number" inputmode="numeric" placeholder="L reps" data-f="r" data-i="${i}"></div>
-       <div><input type="number" inputmode="numeric" placeholder="R reps" data-f="rr" data-i="${i}"></div>`
-    : `<div><input type="number" inputmode="decimal" placeholder="kg" data-f="w" data-i="${i}"></div>
+  const rowInputs=(i)=>`<div><input type="number" inputmode="decimal" placeholder="kg" data-f="w" data-i="${i}"></div>
        <div><input type="number" inputmode="numeric" placeholder="reps" data-f="r" data-i="${i}"></div>`;
   let setsHtml='';
   for(let i=0;i<n;i++){
     let label=(i+1)+'', cls='';
     if(state.phase==='heavy' && i===2){ label='TOP'; cls=' topset'; }
-    setsHtml+=`<div class="setrow${ex.uni?' uni':''}${cls}">
+    setsHtml+=`<div class="setrow${cls}">
       <div class="n">${label}</div>
       ${rowInputs(i)}
       <button class="rm" title="remove">×</button>
@@ -332,7 +341,7 @@ function liftCard(ex){
   }
   card.innerHTML=`
     <div class="card-top">
-      <div class="ex-name">${ex.name}</div>
+      <div class="ex-name">${ex.name}${ex.variants?` <span style="color:var(--muted);font-weight:400">· ${(ex.variants.find(x=>x.id===logIdFor(ex))||{}).label||''}</span>`:''}</div>
       <div class="badge ${ex.compound?'comp':''}">${ex.compound?'Compound':(ex.uni?'Single leg':'Isolation')}</div>
     </div>
     <div class="proto">${protoText(ex)}</div>
@@ -354,7 +363,7 @@ function liftCard(ex){
   if(vseg) vseg.querySelectorAll('button').forEach(b=>b.onclick=async()=>{ state.variant[ex.id]=b.dataset.k; await saveSettings(); render(); });
   card.querySelector('.addset').onclick=()=>{
     const i=setsEl.children.length;
-    const row=document.createElement('div'); row.className='setrow'+(ex.uni?' uni':'');
+    const row=document.createElement('div'); row.className='setrow';
     row.innerHTML=`<div class="n">${i+1}</div>${rowInputs(i)}<button class="rm">×</button>`;
     row.querySelector('.rm').onclick=()=>{row.remove();renumber(setsEl);};
     setsEl.appendChild(row);
@@ -370,7 +379,7 @@ function liftCard(ex){
       const rrEl=r.querySelector('[data-f="rr"]'); const repsR=rrEl?parseInt(rrEl.value,10):NaN;
       if(!isNaN(w)||!isNaN(reps)||!isNaN(repsR)){
         const s={w:isNaN(w)?null:w, reps:isNaN(reps)?null:reps};
-        if(ex.uni) s.repsR=isNaN(repsR)?null:repsR;
+        if(rrEl) s.repsR=isNaN(repsR)?null:repsR;
         sets.push(s);
       }
     });
@@ -419,7 +428,7 @@ async function refreshLift(card, ex){
       const w=await loadLog('weighin'); const lw=w.find(e=>wTotal(e)!=null);
       const bwEl=card.querySelector('[data-bw]'); if(bwEl && !bwEl.value && lw) bwEl.value=wTotal(lw);
     }
-    const mx=currentMax(log);
+    const mx=currentMax(log, incFor(ex));
     if(mx){
       const s=suggestSets(mx);
       suggEl.innerHTML=`🎯 ${s.line}`;
@@ -484,6 +493,60 @@ function sparkline(vals, caption, color, unit){
       ${dots}
     </svg>`;
   return wrap;
+}
+
+function cardFor(ex){
+  if(ex.variants){ const key=state.variant[ex.id]||ex.variants[0].key; const v=ex.variants.find(x=>x.key===key)||ex.variants[0];
+    if(v.mode==='track') return trackCard(ex); if(v.mode==='lift') return liftCard(ex); }
+  return ex.track?trackCard(ex):liftCard(ex);
+}
+// ---------- bodyweight progression card (e.g. pull-up stages) ----------
+function trackCard(ex){
+  const card=document.createElement('div'); card.className='card comp';
+  const key=state.variant[ex.id]||ex.variants[0].key;
+  const v=ex.variants.find(x=>x.key===key)||ex.variants[0];
+  const lid=v.id, unit=v.unit;
+  const rowHtml=(i)=>`<div class="setrow trk"><div class="n">${i+1}</div><div><input type="number" inputmode="numeric" placeholder="${unit}" data-v data-i="${i}"></div><button class="rm">×</button></div>`;
+  let rows=''; for(let i=0;i<3;i++) rows+=rowHtml(i);
+  card.innerHTML=`<div class="card-top"><div class="ex-name">${ex.name} <span style="color:var(--muted);font-weight:400">· ${v.label}</span></div><div class="badge comp">Bodyweight</div></div>
+    <div class="seg mini" data-varseg style="margin-top:10px">${ex.variants.map(x=>`<button data-k="${x.key}" class="${x.key===v.key?'on':''}">${x.label}</button>`).join('')}</div>
+    <div class="proto" style="margin-top:10px">${v.hint}</div>
+    <div class="last" data-last></div>
+    <div class="sets">${rows}</div>
+    <button class="addset">+ Add set</button>
+    <div class="row2"><div><label class="field-lab">Date</label><input class="datein" type="date" data-date value="${todayISO()}"></div><button class="save">Save</button></div>
+    <div class="hist-toggle"><span>Progress &amp; history</span><span class="arr">▾</span></div><div class="hist"></div>`;
+  const setsEl=card.querySelector('.sets');
+  card.querySelectorAll('[data-varseg] button').forEach(b=>b.onclick=async()=>{ state.variant[ex.id]=b.dataset.k; await saveSettings(); render(); });
+  card.querySelector('.addset').onclick=()=>{ const i=setsEl.children.length; const r=document.createElement('div'); r.className='setrow trk'; r.innerHTML=rowHtml(i).replace(/^<div class="setrow trk">|<\/div>$/g,''); r.querySelector('.rm').onclick=()=>{r.remove();renumber(setsEl);}; setsEl.appendChild(r); };
+  setsEl.querySelectorAll('.rm').forEach(b=>b.onclick=(e)=>{e.target.closest('.setrow').remove();renumber(setsEl);});
+  card.querySelector('.save').onclick=async()=>{
+    const date=card.querySelector('[data-date]').value||todayISO();
+    const sets=[]; setsEl.querySelectorAll('[data-v]').forEach(i=>{ const n=parseInt(i.value,10); if(n>0) sets.push({v:n}); });
+    if(!sets.length){ toast('Enter a set first'); return; }
+    const log=await loadLog(lid); log.push({date,phase:state.phase,sets}); log.sort((a,b)=>a.date<b.date?1:-1);
+    await sset('log:'+lid,log); setsEl.querySelectorAll('input').forEach(i=>i.value=''); toast('Saved ✓'); refreshTrack(card,lid,unit);
+  };
+  card.querySelector('.hist-toggle').onclick=(e)=>{e.currentTarget.classList.toggle('open');card.querySelector('.hist').classList.toggle('open');state.open[lid]=card.querySelector('.hist').classList.contains('open');};
+  refreshTrack(card,lid,unit);
+  if(state.open[lid]){card.querySelector('.hist-toggle').classList.add('open');card.querySelector('.hist').classList.add('open');}
+  return card;
+}
+async function refreshTrack(card,lid,unit){
+  const log=await loadLog(lid);
+  const lastEl=card.querySelector('[data-last]');
+  const bestOf=(e)=>Math.max(...(e.sets||[]).map(s=>s.v||0));
+  if(log.length){ const e=log[0]; lastEl.innerHTML=`<span>Last:</span> ${e.sets.map(s=>s.v).join(' / ')} ${unit} <span>· best ${bestOf(e)} (${fmtDate(e.date)})</span>`; }
+  else lastEl.innerHTML='<span>Nothing logged yet — set your baseline.</span>';
+  const hist=card.querySelector('.hist'); hist.innerHTML='';
+  if(!log.length){ hist.innerHTML='<div class="empty">Nothing logged yet.</div>'; return; }
+  hist.appendChild(sparkline(log.slice().reverse().map(bestOf),'Best set per session','#cdff3a',unit));
+  log.slice(0,12).forEach(e=>{
+    const row=document.createElement('div'); row.className='entry';
+    row.innerHTML=`<div class="dt">${fmtDate(e.date)}</div><div class="v">${e.sets.map(s=>s.v).join(' / ')} ${unit} <span class="delx">×</span></div>`;
+    row.querySelector('.delx').onclick=async()=>{const real=await loadLog(lid);const i=real.indexOf(e);if(i>-1){real.splice(i,1);await sset('log:'+lid,real);refreshTrack(card,lid,unit);}};
+    hist.appendChild(row);
+  });
 }
 
 // ---------- run card ----------
@@ -874,7 +937,7 @@ function render(){
     c.appendChild(pushupCard());
     return;
   }
-  day.exercises.forEach(ex=>c.appendChild(liftCard(ex)));
+  day.exercises.forEach(ex=>c.appendChild(cardFor(ex)));
   c.appendChild(runCard(RUNDAY));
   c.appendChild(pushupCard());
 }
