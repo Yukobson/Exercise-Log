@@ -194,10 +194,10 @@
 const DAYS = [
   {id:'sun', short:'Sun', name:'Sunday',    focus:'Rest',                   type:'rest'},
   {id:'mon', short:'Mon', name:'Monday',    focus:'Full Body A',            type:'lift', exercises:[
-    {id:'squat',   name:'Back Squat / Leg Press', compound:true},
-    {id:'incpress',name:'Bench Press',            compound:true},
+    {id:'squat',   name:'Back Squat / Leg Press', compound:true, bar:true},
+    {id:'incpress',name:'Bench Press',            compound:true, bar:true},
     {id:'latpull', name:'Lat Pull Down',          compound:true},
-    {id:'ohp',     name:'Overhead Press',         compound:true},
+    {id:'ohp',     name:'Overhead Press',         compound:true, bar:true},
     {id:'cgpull',  name:'Close-Grip Underhand Pull Down', compound:true},
   ]},
   {id:'tue', short:'Tue', name:'Tuesday',   focus:'Run / Hike',             type:'run'},
@@ -215,7 +215,7 @@ const DAYS = [
   ]},
   {id:'thu', short:'Thu', name:'Thursday',  focus:'Run / Hike',             type:'run'},
   {id:'fri', short:'Fri', name:'Friday',    focus:'Full Body C',            type:'lift', exercises:[
-    {id:'dead',    name:'Deadlift',               compound:true},
+    {id:'dead',    name:'Deadlift',               compound:true, bar:true},
     {id:'fly',     name:'Chest Fly',              compound:false},
     {id:'pullup',  name:'Pull-ups',               track:true, variants:[
       {key:'neg',  label:'Negatives', id:'pullup_neg',  unit:'reps', hint:'Jump or step to the top, lower yourself slowly (3–5 s). Log reps per set.'},
@@ -298,6 +298,14 @@ function protoText(ex){
   return `${uni}<span class="tagV">● VOLUME</span> · <b>3 × 10 @ 60% of max</b> · get all 3×10 → max +${inc}kg next heavy · miss → repeat`;
 }
 
+const BAR_KG=20, PLATES=[25,20,15,10,5,2.5];
+function plateStr(total){
+  let per=(total-BAR_KG)/2;
+  if(per<-1e-9) return 'below bar';
+  if(per<1e-9) return 'bar only';
+  const out=[]; for(const d of PLATES){ while(per>=d-1e-9){ out.push(d); per-=d; } }
+  return out.join('+') + (per>1e-9?' +'+per.toFixed(1)+'?':'');
+}
 function incFor(ex){ if(ex.variants){ const key=state.variant[ex.id]||ex.variants[0].key; const v=ex.variants.find(x=>x.key===key)||ex.variants[0]; if(v.inc) return v.inc; } return ex.inc||5; }
 function roundTo(x,inc){ inc=inc||5; return Math.round(x/inc)*inc; }
 function volSuccess(entry){ return (entry.sets||[]).filter(s=>{ const r=effReps(s); return r!=null&&r>=10; }).length>=3; }
@@ -434,6 +442,10 @@ async function refreshLift(card, ex){
       suggEl.innerHTML=`🎯 ${s.line}`;
       const wInputs=card.querySelectorAll('.sets [data-f="w"]');
       wInputs.forEach(inp=>{ const i=+inp.dataset.i; if(s.per[i]!=null) inp.placeholder=s.per[i]+' kg'; });
+      if(ex.bar){
+        const uniq=[...new Set(s.per.filter(v=>v!=null))];
+        suggEl.innerHTML += `<div style="margin-top:5px;border-top:1px solid #2a2e2055;padding-top:5px">🏋️ Plates/side (${BAR_KG}kg bar): ${uniq.map(w=>`<b>${w}</b> → ${plateStr(w)}`).join(' &nbsp;·&nbsp; ')}</div>`;
+      }
     } else {
       suggEl.innerHTML=`🎯 No data yet — Heavy week: work up to a 3-rep max. Volume week: 3×10 at roughly 60% of that. Your first log sets the baseline.`;
     }
