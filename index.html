@@ -202,8 +202,8 @@ const DAYS = [
   ]},
   {id:'tue', short:'Tue', name:'Tuesday',   focus:'Run / Hike',             type:'run'},
   {id:'wed', short:'Wed', name:'Wednesday', focus:'Full Body B',            type:'lift', exercises:[
-    {id:'legext',  name:'Leg Extension (each leg)', compound:false, uni:true},
-    {id:'legcurl', name:'Leg Curl (each leg)',      compound:false, uni:true},
+    {id:'legext',  name:'Leg Extension (each leg)', compound:false, uni:true, repTarget:20},
+    {id:'legcurl', name:'Leg Curl (each leg)',      compound:false, uni:true, repTarget:20},
     {id:'dipmach', name:'Dips',                   compound:true, variants:[
       {key:'machine', label:'Machine',   id:'dipmach',   mode:'lift',  inc:5},
       {key:'neg',     label:'Negatives', id:'dips_neg',  mode:'track', unit:'reps', hint:'Press up to the top (or step up), lower slowly (3–5 s). Log reps per set.'},
@@ -223,7 +223,7 @@ const DAYS = [
       {key:'full', label:'Pull-ups',  id:'pullup',      unit:'reps', hint:'Full pull-ups, bodyweight only. Log reps per set.'},
     ]},
     {id:'facepull',name:'Face Pulls',             compound:false},
-    {id:'calf',    name:'Calf Raise',             compound:false},
+    {id:'calf',    name:'Calf Raise',             compound:false, repTarget:20},
   ]},
   {id:'sat', short:'Sat', name:'Saturday',  focus:'Parkrun · 5 km',         type:'run', runLabel:'Parkrun', fixedDistance:5},
   {id:'extra', short:'＋', name:'Extra',     focus:'Extra Sessions',          type:'extra'},
@@ -292,10 +292,10 @@ function renderDays(){
 // ---------- content ----------
 function setCount(ex){ return 3; }
 function protoText(ex){
-  const inc=incFor(ex);
+  const inc=incFor(ex), rt=ex.repTarget||10;
   const uni = ex.uni ? `<b>One leg at a time</b> · same weight &amp; reps each leg · log the <b>per-leg</b> weight (not doubled) · ` : '';
   if(state.phase==='heavy') return `${uni}<span class="tagH">● HEAVY</span> · build up, then <b>top set: 3 reps @ max</b> · hit it → max +${inc}kg · miss → repeat`;
-  return `${uni}<span class="tagV">● VOLUME</span> · <b>3 × 10 @ 60% of max</b> · get all 3×10 → max +${inc}kg next heavy · miss → repeat`;
+  return `${uni}<span class="tagV">● VOLUME</span> · <b>3 × ${rt} @ 60% of max</b> · get all 3×${rt} → max +${inc}kg next heavy · miss → repeat`;
 }
 
 const BAR_KG=20, PLATES=[25,20,15,10,5,2.5];
@@ -308,27 +308,34 @@ function plateStr(total){
 }
 function incFor(ex){ if(ex.variants){ const key=state.variant[ex.id]||ex.variants[0].key; const v=ex.variants.find(x=>x.key===key)||ex.variants[0]; if(v.inc) return v.inc; } return ex.inc||5; }
 function roundTo(x,inc){ inc=inc||5; return Math.round(x/inc)*inc; }
-function volSuccess(entry){ return (entry.sets||[]).filter(s=>{ const r=effReps(s); return r!=null&&r>=10; }).length>=3; }
-function currentMax(log, inc){
-  inc=inc||5;
+function volSuccess(entry, t){ t=t||10; return (entry.sets||[]).filter(s=>{ const r=effReps(s); return r!=null&&r>=t; }).length>=3; }
+function currentMax(log, inc, rt){
+  inc=inc||5; rt=rt||10;
   const lastH=log.find(e=>e.phase==='heavy'&&bestSet(e));
   const lastV=log.find(e=>(e.phase==='volume'||e.phase==='iso')&&bestSet(e));
   if(!lastH&&!lastV) return null;
   let M = lastH ? bestSet(lastH).w : roundTo(bestSet(lastV).w/0.6, inc);
   if(!(M>0)) return null;
+  const sessionOK=(e)=> e.phase==='heavy'
+    ? (()=>{ const t=bestSet(e); return !!(t && t.reps!=null && t.reps>=3); })()
+    : volSuccess(e, rt);
+  let miss=0;
+  for(const e of log){ if(!bestSet(e)) continue; if(sessionOK(e)) break; miss++; }
+  if(miss>=3){
+    const dl=Math.max(inc, roundTo(M*0.10, inc));
+    return { max: Math.max(inc, M-dl), deload:true, missStreak:miss, inc, rt };
+  }
   const recent = !lastV ? lastH : (!lastH ? lastV : (lastH.date>=lastV.date ? lastH : lastV));
-  let ok=false;
-  if(recent.phase==='heavy'){ const t=bestSet(recent); ok = !!(t && t.reps!=null && t.reps>=3); }
-  else { ok = volSuccess(recent); }
-  return { max: ok ? M+inc : M, incremented: ok, inc };
+  const ok = sessionOK(recent);
+  return { max: ok ? M+inc : M, incremented: ok, inc, rt };
 }
 function suggestSets(mx){
-  const M=mx.max, inc=mx.inc||5, w60=Math.max(inc,roundTo(M*0.6,inc)), w80=roundTo(M*0.8,inc);
-  const tag = mx.incremented ? ` <b>(+${inc} ✓)</b>` : '';
+  const M=mx.max, inc=mx.inc||5, rt=mx.rt||10, w60=Math.max(inc,roundTo(M*0.6,inc)), w80=roundTo(M*0.8,inc);
+  const tag = mx.deload ? ` <b style="color:var(--heavy)">(reset ↓ after ${mx.missStreak} misses)</b>` : (mx.incremented ? ` <b>(+${inc} ✓)</b>` : '');
   if(state.phase==='heavy'){
     return { line:`Max <b>${M}kg</b>${tag} · build ${w60} → ${w80} → <b>top ${M}kg × 3</b> · hit it → next max ${M+inc}kg`, per:[w60,w80,M] };
   }
-  return { line:`Max <b>${M}kg</b>${tag} · <b>3 × 10 @ ${w60}kg</b> (60%) · all 3×10 → max ${M+inc}kg next heavy`, per:[w60,w60,w60] };
+  return { line:`Max <b>${M}kg</b>${tag} · <b>3 × ${rt} @ ${w60}kg</b> (60%) · all 3×${rt} → max ${M+inc}kg next heavy`, per:[w60,w60,w60] };
 }
 
 function liftCard(ex){
@@ -436,7 +443,7 @@ async function refreshLift(card, ex){
       const w=await loadLog('weighin'); const lw=w.find(e=>wTotal(e)!=null);
       const bwEl=card.querySelector('[data-bw]'); if(bwEl && !bwEl.value && lw) bwEl.value=wTotal(lw);
     }
-    const mx=currentMax(log, incFor(ex));
+    const mx=currentMax(log, incFor(ex), ex.repTarget||10);
     if(mx){
       const s=suggestSets(mx);
       suggEl.innerHTML=`🎯 ${s.line}`;
