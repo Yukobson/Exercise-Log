@@ -161,6 +161,15 @@
 
   .toast{position:fixed;left:50%;bottom:22px;transform:translateX(-50%) translateY(80px);background:var(--acid);color:#141a04;font-family:"JetBrains Mono",monospace;font-weight:700;font-size:12px;letter-spacing:.06em;padding:11px 18px;border-radius:11px;z-index:50;opacity:0;transition:.3s;text-transform:uppercase;}
   .toast.show{transform:translateX(-50%) translateY(0);opacity:1;}
+  .datarow{display:flex;gap:8px;margin-top:18px;}
+  .dbtn{flex:1;background:transparent;border:1px solid var(--line);color:var(--muted);font-family:"JetBrains Mono",monospace;font-size:11px;letter-spacing:.08em;padding:11px;border-radius:10px;cursor:pointer;text-transform:uppercase;}
+  .dbtn:active{border-color:var(--acid);color:var(--acid);}
+  #backupOverlay{display:none;position:fixed;inset:0;z-index:100;background:#0c0d0afa;align-items:center;justify-content:center;padding:26px;}
+  #backupOverlay.show{display:flex;}
+  .bk-inner{max-width:400px;text-align:center;}
+  .bk-h{font-size:34px;font-weight:800;text-transform:uppercase;letter-spacing:-.03em;margin:12px 0 8px;}
+  .bk-msg{font-family:"JetBrains Mono",monospace;font-size:12px;color:var(--muted);line-height:1.6;margin:0 0 20px;}
+  .bk-note{font-family:"JetBrains Mono",monospace;font-size:10px;color:#54583f;line-height:1.6;margin-top:16px;}
   .foot{text-align:center;font-family:"JetBrains Mono",monospace;font-size:10px;color:#454937;letter-spacing:.08em;padding:18px 0 4px;}
 </style>
 </head>
@@ -184,7 +193,22 @@
 <div class="wrap">
   <div class="days" id="days"></div>
   <div id="content"></div>
+  <div class="datarow">
+    <button class="dbtn" id="exportBtn">⬇ Export / Backup</button>
+    <button class="dbtn" id="importBtn">⬆ Import / Restore</button>
+    <input type="file" id="importFile" accept=".json,application/json" style="display:none">
+  </div>
   <div class="foot" id="foot"></div>
+</div>
+
+<div id="backupOverlay">
+  <div class="bk-inner">
+    <div style="font-size:54px">🛟</div>
+    <h2 class="bk-h">Backup Time</h2>
+    <p class="bk-msg" id="bkMsg"></p>
+    <button class="save" id="bkExport" style="width:100%;font-size:14px;padding:16px">⬇ Export now &amp; continue</button>
+    <p class="bk-note">Save the file somewhere safe (e.g. Google Drive).<br>This gate appears every 2 weeks or 8 logged days.</p>
+  </div>
 </div>
 
 <div class="toast" id="toast"></div>
@@ -965,6 +989,54 @@ document.querySelectorAll('#seg button').forEach(b=>{
   b.onclick=async()=>{ state.phase=b.dataset.p; await saveSettings(); render(); };
 });
 
+function allLogKeys(){
+  const keys=[]; DAYS.forEach(d=>{ if(d.exercises) d.exercises.forEach(e=>{ keys.push(e.id); if(e.variants) e.variants.forEach(v=>keys.push(v.id)); }); });
+  keys.push('run','sat','pushups','extra','weighin');
+  DAY_ORDER.forEach(id=>keys.push('time:'+id));
+  return [...new Set(keys)];
+}
+async function backupStatus(){
+  if(!HAS) return {due:false};
+  const meta=await sget('exportMeta');
+  if(!meta||!meta.last) return {due:true, first:true};
+  const days=Math.floor((new Date(todayISO())-new Date(meta.last))/86400000);
+  const dates=new Set();
+  for(const k of allLogKeys()){ const lg=await loadLog(k); lg.forEach(e=>{ if(e.date && e.date>meta.last) dates.add(e.date); }); }
+  return {due: days>=14 || dates.size>=8, days, logged:dates.size};
+}
+async function doExport(){
+  try{
+    const data={};
+    for(let i=0;i<localStorage.length;i++){ const k=localStorage.key(i); if(k&&k.startsWith(PREFIX)) data[k]=localStorage.getItem(k); }
+    const blob=new Blob([JSON.stringify({app:'exercise-log',exported:todayISO(),data},null,1)],{type:'application/json'});
+    const a=document.createElement('a'); a.href=URL.createObjectURL(blob); a.download='exercise-log-backup-'+todayISO()+'.json';
+    document.body.appendChild(a); a.click(); a.remove();
+    await sset('exportMeta',{last:todayISO()});
+    document.getElementById('backupOverlay').classList.remove('show');
+    toast('Backup downloaded ✓');
+  }catch(e){ toast('Export failed — try again'); }
+}
+document.getElementById('exportBtn').onclick=doExport;
+document.getElementById('bkExport').onclick=doExport;
+document.getElementById('importBtn').onclick=()=>document.getElementById('importFile').click();
+document.getElementById('importFile').onchange=(ev)=>{
+  const f=ev.target.files[0]; if(!f) return;
+  const r=new FileReader();
+  r.onload=()=>{
+    try{
+      const j=JSON.parse(r.result);
+      const data=j.data||j;
+      const keys=Object.keys(data).filter(k=>k.startsWith(PREFIX));
+      if(!keys.length){ toast('Not a valid backup'); return; }
+      if(!confirm('Restore '+keys.length+' records? This overwrites matching data on this device.')) return;
+      keys.forEach(k=>localStorage.setItem(k,data[k]));
+      Object.keys(logCache).forEach(k=>delete logCache[k]);
+      toast('Restored ✓'); render();
+    }catch(e){ toast('Import failed'); }
+  };
+  r.readAsText(f); ev.target.value='';
+};
+
 (async function init(){
   const s=await sget('settings'); if(s&&s.phase) state.phase=s.phase; if(s&&s.variant) state.variant=s.variant;
   // one-time migration: fold old Tue (long run) & Thu (sprints) histories into the unified run log
@@ -975,6 +1047,13 @@ document.querySelectorAll('#seg button').forEach(b=>{
     if(merged.length){ logCache['run']=merged; await sset('log:run',merged); }
   }
   state.active=todayId();
+  const bk=await backupStatus();
+  if(bk.due){
+    document.getElementById('bkMsg').innerHTML = bk.first
+      ? 'No backup on record yet.<br>Export once to start the cycle.'
+      : `It's been <b>${bk.days} days</b> and <b>${bk.logged} logged days</b><br>since your last backup.`;
+    document.getElementById('backupOverlay').classList.add('show');
+  }
   document.getElementById('foot').textContent = HAS ? 'data saved in this browser on this device · tap × on any entry to delete' : 'storage unavailable — data won\'t persist';
   render();
 })();
