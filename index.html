@@ -333,8 +333,18 @@ function plateStr(total){
 function incFor(ex){ if(ex.variants){ const key=state.variant[ex.id]||ex.variants[0].key; const v=ex.variants.find(x=>x.key===key)||ex.variants[0]; if(v.inc) return v.inc; } return ex.inc||5; }
 function roundTo(x,inc){ inc=inc||5; return Math.round(x/inc)*inc; }
 function volSuccess(entry, t){ t=t||10; return (entry.sets||[]).filter(s=>{ const r=effReps(s); return r!=null&&r>=t; }).length>=3; }
+function mergeSessions(log){
+  const map={}, out=[];
+  log.forEach(e=>{
+    const key=e.date+'|'+(e.phase||'');
+    if(map[key]){ map[key].sets=map[key].sets.concat(e.sets||[]); }
+    else { const c={date:e.date, phase:e.phase, sets:(e.sets||[]).slice()}; map[key]=c; out.push(c); }
+  });
+  return out;
+}
 function currentMax(log, inc, rt){
   inc=inc||5; rt=rt||10;
+  log=mergeSessions(log);
   const lastH=log.find(e=>e.phase==='heavy'&&bestSet(e));
   const lastV=log.find(e=>(e.phase==='volume'||e.phase==='iso')&&bestSet(e));
   if(!lastH&&!lastV) return null;
@@ -481,9 +491,10 @@ async function refreshLift(card, ex){
       suggEl.innerHTML=`🎯 No data yet — Heavy week: work up to a 3-rep max. Volume week: 3×10 at roughly 60% of that. Your first log sets the baseline.`;
     }
   }
-  // "last" hint — compare same phase
+  // "last" hint — compare same phase (same-day saves merged into one session)
+  const merged=mergeSessions(log);
   const lastEl=card.querySelector('[data-last]');
-  const rel = log.filter(e=>e.phase===state.phase);
+  const rel = merged.filter(e=>e.phase===state.phase);
   if(rel.length){
     const b=bestSet(rel[0]);
     if(b) lastEl.innerHTML=`<span>Last ${state.phase} top set:</span> ${b.w}kg × ${b.repsR!=null?`${b.repsL??'–'}/${b.repsR??'–'} <span>L/R</span>`:(b.reps??'–')} <span>(${fmtDate(rel[0].date)})</span>`;
@@ -495,9 +506,9 @@ async function refreshLift(card, ex){
   if(!log.length){ hist.innerHTML='<div class="empty">Nothing logged yet.</div>'; return; }
   // chart: top-set weight over time, per phase (plus legacy pre-rule entries if any)
   const series = [{label:'Heavy top set', ph:'heavy', col:'#ff7a3c'},{label:'Volume top set', ph:'volume', col:'#48d4ff'}];
-  if(log.some(e=>e.phase==='iso')) series.push({label:'Earlier sets (pre-rule)', ph:'iso', col:'#cdff3a'});
+  if(merged.some(e=>e.phase==='iso')) series.push({label:'Earlier sets (pre-rule)', ph:'iso', col:'#cdff3a'});
   series.forEach(se=>{
-    const pts=log.filter(e=>e.phase===se.ph).slice().reverse().map(e=>{const b=bestSet(e);return b?b.w:null;}).filter(v=>v!=null);
+    const pts=merged.filter(e=>e.phase===se.ph).slice().reverse().map(e=>{const b=bestSet(e);return b?b.w:null;}).filter(v=>v!=null);
     if(pts.length>=1){ hist.appendChild(sparkline(pts, se.label, se.col)); }
   });
   // entry list
