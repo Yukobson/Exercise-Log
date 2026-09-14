@@ -1007,6 +1007,7 @@ function cardioCard(){
     <div class="seg mini" data-kindseg style="margin-top:10px">
       <button data-k="run" class="${state.runKind==='run'?'on':''}">Run</button>
       <button data-k="hike" class="${state.runKind==='hike'?'on':''}">Hike</button>
+      <button data-k="hiit" class="${state.runKind==='hiit'?'on':''}">HIIT</button>
     </div>
     <div class="proto">Log distance &amp; time — <b>pace is calculated automatically</b>.</div>
     <div class="last" data-last></div>
@@ -1036,10 +1037,12 @@ function cardioCard(){
   card.querySelector('.save').onclick=async()=>{
     const date=card.querySelector('[data-date]').value||todayISO();
     const dist=parseFloat(dEl.value), sec=(parseInt(mEl.value||0,10)*60)+(parseInt(sEl.value||0,10));
-    if(!(dist>0)||!(sec>0)){ toast('Enter distance & time'); return; }
+    if(!(sec>0) || (state.runKind!=='hiit' && !(dist>0))){ toast(state.runKind==='hiit'?'Enter your time':'Enter distance & time'); return; }
     const log=await loadLog('run');
     if(card._edit){ const i=log.indexOf(card._edit); if(i>-1) log.splice(i,1); card._edit=null; }
-    log.push({date, distance:dist, sec, pace:sec/dist, kind:state.runKind});
+    const entry={date, sec, kind:state.runKind};
+    if(dist>0){ entry.distance=dist; entry.pace=sec/dist; }
+    log.push(entry);
     log.sort((a,b)=>a.date<b.date?1:-1);
     await sset('log:run', log);
     dEl.value=mEl.value=sEl.value=''; calc();
@@ -1055,12 +1058,17 @@ async function refreshCardio(card){
   const lastEl=card.querySelector('[data-last]');
   const ofKind=(k)=>log.filter(e=>(e.kind||'run')===k);
   const sel=ofKind(state.runKind);
-  if(sel.length){ const e=sel[0]; lastEl.innerHTML=`<span>Last ${state.runKind}:</span> ${e.distance}km in ${fmtPace(e.sec)} · ${fmtPace(e.pace)}<span>/km (${fmtDate(e.date)})</span>`; }
+  if(sel.length){ const e=sel[0];
+    lastEl.innerHTML = e.pace!=null
+      ? `<span>Last ${state.runKind}:</span> ${e.distance}km in ${fmtPace(e.sec)} · ${fmtPace(e.pace)}<span>/km (${fmtDate(e.date)})</span>`
+      : `<span>Last ${state.runKind}:</span> ${Math.round(e.sec/60)} min <span>(${fmtDate(e.date)})</span>`; }
   else lastEl.innerHTML=`<span>No ${state.runKind}s logged yet.</span>`;
   const hist=card.querySelector('.hist'); hist.innerHTML='';
   if(!log.length){ hist.innerHTML='<div class="empty">Nothing logged yet.</div>'; return; }
+  const hi=ofKind('hiit');
+  if(hi.length) hist.appendChild(sparkline(hi.slice().reverse().map(e=>Math.round(e.sec/60)),'HIIT minutes','#ff7a3c','min'));
   [['run','Run pace (lower = faster)','#48d4ff'],['hike','Hike pace','#7ee08a']].forEach(([k,cap,col])=>{
-    const items=ofKind(k);
+    const items=ofKind(k).filter(e=>e.pace!=null);
     if(items.length){
       const vals=items.slice().reverse().map(e=>+(e.pace).toFixed(0));
       const tS=items.reduce((a,e)=>a+(e.sec||0),0), tK=items.reduce((a,e)=>a+(e.distance||0),0);
@@ -1068,11 +1076,13 @@ async function refreshCardio(card){
     }
   });
   log.slice(0,14).forEach(e=>{
-    const tagd=(e.kind||'run')==='hike'?'<span class="ph g">H</span>':'<span class="ph v">R</span>';
+    const kk=(e.kind||'run');
+    const tagd = kk==='hike'?'<span class="ph g">H</span>':(kk==='hiit'?'<span class="ph h">HI</span>':'<span class="ph v">R</span>');
+    const vtxt = e.pace!=null ? `${e.distance}km · ${fmtPace(e.sec)} · ${fmtPace(e.pace)}/km` : `${Math.round(e.sec/60)} min`;
     const row=document.createElement('div'); row.className='entry';
-    row.innerHTML=`<div class="dt">${fmtDate(e.date)}${tagd}</div><div class="v">${e.distance}km · ${fmtPace(e.sec)} · ${fmtPace(e.pace)}/km <span class="edx">✎</span><span class="delx">×</span></div>`;
+    row.innerHTML=`<div class="dt">${fmtDate(e.date)}${tagd}</div><div class="v">${vtxt} <span class="edx">✎</span><span class="delx">×</span></div>`;
     row.querySelector('.edx').onclick=async()=>{
-      card.querySelector('[data-d]').value=e.distance;
+      card.querySelector('[data-d]').value=e.distance??'';
       card.querySelector('[data-min]').value=Math.floor(e.sec/60);
       card.querySelector('[data-sec]').value=Math.round(e.sec%60);
       card.querySelector('[data-date]').value=e.date;
