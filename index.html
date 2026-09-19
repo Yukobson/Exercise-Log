@@ -298,7 +298,13 @@ function bestSet(entry){
   if(!best) return null;
   return Object.assign({}, best, {reps: effReps(best), repsL: best.reps});
 }
-function volSuccess(entry, t){ t=t||10; return (entry.sets||[]).filter(s=>{ const r=effReps(s); return r!=null&&r>=t; }).length>=3; }
+function volSuccess(entry, t){
+  t=t||10;
+  const wsets=(entry.sets||[]).filter(s=>s.w!=null);
+  if(!wsets.length) return (entry.sets||[]).filter(s=>{ const r=effReps(s); return r!=null&&r>=t; }).length>=3;
+  const top=Math.max(...wsets.map(s=>s.w));
+  return wsets.filter(s=>s.w>=top-1e-9 && (()=>{ const r=effReps(s); return r!=null&&r>=t; })()).length>=3;
+}
 function mergeSessions(log){
   const map={}, out=[];
   log.forEach(e=>{
@@ -1354,34 +1360,37 @@ async function goalsCard(){
     return {one:ep, three:ep/1.1, txt:`best ${bs.w}kg × ${bs.reps} (untested)`};
   };
   const bestV=async(id)=>{ const lg=await loadLog(id); let b=0; lg.forEach(en=>(en.sets||[]).forEach(x=>{if((x.v||0)>b)b=x.v;})); return b; };
+  // a goal is DONE only when a qualifying set is actually in the log
+  const demoSet=async(id,wNeed,rNeed)=>{ const lg=await loadLog(id); return lg.some(e=>(e.sets||[]).some(x=>x.w!=null&&x.w>=wNeed-1e-9&&(effReps(x)||0)>=rNeed)); };
   const rows=[];
-  const add=(name,target,cur,goal,curTxt)=>{ const pct=(cur!=null&&goal>0)? Math.min(100,cur/goal*100):0; rows.push({name,target,curTxt,pct}); };
+  const add=(name,target,cur,goal,curTxt,done)=>{ const pct=done?100:((cur!=null&&goal>0)? Math.min(100,cur/goal*100):0); rows.push({name,target,curTxt,pct,done:!!done}); };
   let v;
-  v=await ev('incpress'); add('Bench Press','BW × 10', v?v.one:null, bw*(1+10/30), v?`${v.txt} · need est 1RM ${Math.round(bw*(1+10/30))}kg`:'no data');
-  v=await ev('squat');    add('Squat','150% BW × 3', v?v.three:null, 1.5*bw, v?`${v.txt} / ${Math.round(1.5*bw)}kg`:'no data');
-  v=await ev('dead');     add('Deadlift','200% BW × 3', v?v.three:null, 2*bw, v?`${v.txt} / ${Math.round(2*bw)}kg`:'no data');
-  v=await ev('ohp');      add('Overhead Press','50% BW × 10', v?v.one:null, 0.5*bw*(1+10/30), v?`${v.txt} · need est 1RM ${Math.round(0.5*bw*(1+10/30))}kg`:'no data');
-  v=await ev('row_bb');   add('Barbell Row','50% BW × 25', v?v.one:null, 0.5*bw*(1+25/30), v?`${v.txt} · need est 1RM ${Math.round(0.5*bw*(1+25/30))}kg`:'log barbell rows to start');
-  const pb=await bestV('pullup');  add('Pull-ups','BW × 10', pb, 10, `${pb} / 10 reps`);
-  const db=await bestV('dips_bw'); add('Dips','BW × 25', db, 25, `${db} / 25 reps`);
-  const hang=await bestV('pullup_hang'); add('Dead Hang','2:00 hold', hang, 120, `${hang}s / 120s`);
+  v=await ev('incpress'); add('Bench Press','BW × 10', v?v.one:null, bw*(1+10/30), v?`${v.txt} · goal set: ${Math.round(bw)}kg × 10`:'no data', await demoSet('incpress', bw, 10));
+  v=await ev('squat');    add('Squat','150% BW × 3', v?v.three:null, 1.5*bw, v?`${v.txt} · goal set: ${Math.round(1.5*bw)}kg × 3`:'no data', await demoSet('squat', 1.5*bw, 3));
+  v=await ev('dead');     add('Deadlift','200% BW × 3', v?v.three:null, 2*bw, v?`${v.txt} · goal set: ${Math.round(2*bw)}kg × 3`:'no data', await demoSet('dead', 2*bw, 3));
+  v=await ev('ohp');      add('Overhead Press','50% BW × 10', v?v.one:null, 0.5*bw*(1+10/30), v?`${v.txt} · goal set: ${Math.round(0.5*bw)}kg × 10`:'no data', await demoSet('ohp', 0.5*bw, 10));
+  v=await ev('row_bb');   add('Barbell Row','50% BW × 25', v?v.one:null, 0.5*bw*(1+25/30), v?`${v.txt} · goal set: ${Math.round(0.5*bw)}kg × 25`:'log barbell rows to start', await demoSet('row_bb', 0.5*bw, 25));
+  const pb=await bestV('pullup');  add('Pull-ups','BW × 10', pb, 10, `${pb} / 10 reps`, pb>=10);
+  const db=await bestV('dips_bw'); add('Dips','BW × 25', db, 25, `${db} / 25 reps`, db>=25);
+  const hang=await bestV('pullup_hang'); add('Dead Hang','2:00 hold', hang, 120, `${hang}s / 120s`, hang>=120);
   const cl=await loadLog('carry');
   let cb=null; cl.forEach(e=>{ const sc=Math.min((e.w||0)/(0.5*bw), (e.sec||0)/60); if(!cb||sc>cb.sc) cb={sc,e}; });
-  add("Farmer's Carry",'50% BW/hand × 1:00', cb?cb.sc:null, 1, cb?`best ${cb.e.w}kg × ${cb.e.sec}s (need ${Math.round(0.5*bw)}kg × 60s)`:'no carries logged');
+  add("Farmer's Carry",'50% BW/hand × 1:00', cb?cb.sc:null, 1, cb?`best ${cb.e.w}kg × ${cb.e.sec}s (need ${Math.round(0.5*bw)}kg × 60s)`:'no carries logged', !!(cb&&cb.sc>=1));
   // running goals — progress measured against goal pace (goal pace / your pace)
   const pk=await loadLog('sat');
   const best5=pk.length? pk.filter(e=>e.distance>=4.9).reduce((a,e)=>(!a||e.sec<a.sec)?e:a,null) : null;
-  add('5 km','sub 25:00', best5? (1500/best5.sec*100):null, 100, best5? `PB ${fmtMS(best5.sec)} (${fmtDate(best5.date)}) / 25:00` : 'no 5 km logged');
+  add('5 km','sub 25:00', best5? (1500/best5.sec*100):null, 100, best5? `PB ${fmtMS(best5.sec)} (${fmtDate(best5.date)}) / 25:00` : 'no 5 km logged', !!(best5&&best5.sec<=1500));
   const rl=await loadLog('run');
   const longs=rl.filter(e=>(e.kind||'run')==='run' && e.distance>=10);
   const bestLong=longs.length? longs.reduce((a,e)=>(!a||e.pace<a.pace)?e:a,null):null;
   const goalPace=7200/21.1; // 5:41/km for sub-2hr half
-  add('Half marathon','sub 2:00:00', bestLong? (goalPace/bestLong.pace*100):null, 100, bestLong? `best 10km+ pace ${fmtPace(bestLong.pace)}/km · need ${fmtPace(goalPace)}/km over 21.1km` : 'log a 10 km+ run to start tracking');
+  const realHalf=rl.some(e=>(e.kind||'run')==='run'&&e.distance>=21&&e.sec<=7200);
+  add('Half marathon','sub 2:00:00', bestLong? (goalPace/bestLong.pace*100):null, 100, bestLong? `best 10km+ pace ${fmtPace(bestLong.pace)}/km · need ${fmtPace(goalPace)}/km over 21.1km` : 'log a 10 km+ run to start tracking', realHalf);
   card.innerHTML=`<div class="card-top"><div class="ex-name">Goals</div><div class="badge comp">@ BW ${bw}kg</div></div>`+
     rows.map(r=>`<div style="margin-top:12px">
       <div style="display:flex;justify-content:space-between;align-items:baseline;font-family:'JetBrains Mono',monospace;font-size:11px">
         <span style="color:var(--ink)">${r.name} <span style="color:var(--muted)">· ${r.target}</span></span>
-        <span style="color:var(--acid)">${Math.round(r.pct)}%</span>
+        <span style="color:var(--acid)">${r.done?'✓ DONE':Math.round(r.pct)+'%'}</span>
       </div>
       <div class="wkbar" style="margin-top:5px"><div class="wkbar-fill" style="width:${r.pct}%"></div></div>
       <div style="font-family:'JetBrains Mono',monospace;font-size:9px;color:var(--muted);margin-top:3px">${r.curTxt}</div>
