@@ -117,6 +117,8 @@
   .entry .delx{color:#54583f;cursor:pointer;padding-left:8px;}
   .entry .edx{color:#54583f;cursor:pointer;padding-left:10px;}
   .entry .edx:active{color:var(--acid);}
+  .tl{display:inline-block;width:11px;height:11px;border-radius:50%;background:#54583f;margin-left:7px;vertical-align:0px;}
+  .tl-green{background:#4ddc7f}.tl-yellow{background:#ffd23c}.tl-red{background:#ff5c5c}.tl-grey{background:#54583f}
   .empty{font-family:"JetBrains Mono",monospace;font-size:11px;color:var(--muted);text-align:center;padding:8px;}
 
   .weekcard{padding:14px 15px;}
@@ -276,6 +278,7 @@ function todayISO(){ return isoLocal(new Date()); }
 function weekRange(){ const now=new Date(); const dow=(now.getDay()+6)%7; const mon=new Date(now); mon.setDate(now.getDate()-dow); const sun=new Date(mon); sun.setDate(mon.getDate()+6); return {start:isoLocal(mon), end:isoLocal(sun)}; }
 function fmtDate(iso){ const [y,m,dd]=iso.split('-'); return dd+'/'+m+'/'+y.slice(2); }
 function fmtPace(sec){ if(!isFinite(sec)||sec<=0) return '—'; const m=Math.floor(sec/60), s=Math.round(sec%60); return m+':'+String(s).padStart(2,'0'); }
+function fmtDur(sec){ if(sec>=3600){ const h=Math.floor(sec/3600), m=Math.floor((sec%3600)/60), x=Math.round(sec%60); return h+':'+String(m).padStart(2,'0')+':'+String(x).padStart(2,'0'); } return fmtPace(sec); }
 function toast(t){ const el=document.getElementById('toast'); el.textContent=t; el.classList.add('show'); setTimeout(()=>el.classList.remove('show'),1600); }
 function daysBetween(a,b){ return Math.round((new Date(b+'T00:00:00')-new Date(a+'T00:00:00'))/86400000); }
 
@@ -314,12 +317,15 @@ function mergeSessions(log){
   });
   return out;
 }
+function sessionPass(e, rt){
+  return e.phase==='heavy'
+    ? (()=>{ const t=bestSet(e); return !!(t && t.reps!=null && t.reps>=3); })()
+    : volSuccess(e, rt);
+}
 function currentMax(log, inc, rt){
   inc=inc||5; rt=rt||10;
   const merged=mergeSessions(log);
-  const sessionOK=(e)=> e.phase==='heavy'
-    ? (()=>{ const t=bestSet(e); return !!(t && t.reps!=null && t.reps>=3); })()
-    : volSuccess(e, rt);
+  const sessionOK=(e)=>sessionPass(e, rt);
   // replay oldest → newest: heavy sessions anchor the max to the attempted
   // weight; every successful session (heavy or volume) stacks +inc
   let M=null, lastOK=false, sawHeavy=false, ep=0;
@@ -362,6 +368,97 @@ function protoText(ex){
 }
 function setCount(ex){ return 3; }
 function renumber(setsEl){ [...setsEl.children].forEach((r,i)=>{ const n=r.querySelector('.n'); if(n && n.textContent!=='TOP') n.textContent=i+1; }); }
+
+// ---------- traffic lights (3-session window) ----------
+const TLC={green:'#4ddc7f', yellow:'#ffd23c', red:'#ff5c5c', grey:'#54583f'};
+function tlDot(l){ return `<span class="tl tl-${(l&&l.c)||'grey'}" title="${(l&&l.why)||''}"></span>`; }
+function trendLight(vals, band){ // vals newest-first, higher = better
+  band=band||0;
+  if(vals.length<3) return {c:'grey', why:'building baseline'};
+  const rec=vals.slice(0,3), prev=vals.slice(3,6);
+  if(!prev.length) return {c:'grey', why:'building baseline'};
+  const rb=Math.max(...rec), pb=Math.max(...prev);
+  if(rb>pb+band) return {c:'green', why:'improving'};
+  if(rb<pb-band) return {c:'red', why:'behind previous block'};
+  return {c:'yellow', why:'holding'};
+}
+async function liftLight(lid, inc, rt){
+  const log=await loadLog(lid);
+  const mx=currentMax(log, inc, rt);
+  if(!mx) return {c:'grey', why:'no data'};
+  const merged=mergeSessions(log).filter(e=>bestSet(e));
+  if(merged.length<3 || mx.estimated) return {c:'grey', why:'building baseline'};
+  if(mx.deload) return {c:'red', why:'reset due ('+mx.missStreak+' misses)'};
+  const cut=new Set(merged.slice(0,3).map(e=>e.date+'|'+(e.phase||'')));
+  const prevRaw=log.filter(e=>!cut.has(e.date+'|'+(e.phase||'')));
+  const pmx=prevRaw.length? currentMax(prevRaw, inc, rt) : null;
+  if(pmx && !pmx.estimated && mx.max < pmx.max) return {c:'red', why:'max moved backwards'};
+  let tm=0; for(const e of merged){ if(sessionPass(e, rt)) break; tm++; }
+  if(tm>=2) return {c:'yellow', why:'two misses, next session decides'};
+  return {c:'green', why:'on track'};
+}
+async function trackLight(lid){
+  const merged=mergeSessions(await loadLog(lid));
+  const bestOf=(e)=>Math.max(0,...(e.sets||[]).map(x=>x.v||0));
+  return trendLight(merged.map(bestOf), 0);
+}
+async function liftLightFor(ex){
+  let v=null;
+  if(ex.variants){ const key=state.variant[ex.id]||ex.variants[0].key; v=ex.variants.find(x=>x.key===key)||ex.variants[0]; }
+  if(ex.track||(v&&v.mode==='track')) return trackLight(v?v.id:ex.id);
+  return liftLight(v?v.id:ex.id, incFor(ex), ex.repTarget||10);
+}
+async function bodyLight(){
+  const w=await loadLog('weighin');
+  const bf=w.filter(e=>wTotal(e)&&e.fat!=null).map(e=>e.fat/wTotal(e)*100);
+  if(bf.length>=4){
+    const avg=(bf[1]+bf[2]+bf[3])/3, d=bf[0]-avg;
+    if(d<-0.3) return {c:'green', why:'body fat trending down'};
+    if(d>0.3) return {c:'red', why:'body fat trending up'};
+    return {c:'yellow', why:'body fat holding'};
+  }
+  const ws=w.filter(e=>e.waist!=null).map(e=>e.waist);
+  if(ws.length>=4){
+    const avg=(ws[1]+ws[2]+ws[3])/3, d=ws[0]-avg;
+    if(d<-1) return {c:'green', why:'waist trending down'};
+    if(d>1) return {c:'red', why:'waist trending up'};
+    return {c:'yellow', why:'waist holding'};
+  }
+  return {c:'grey', why:'need 4+ weigh-ins'};
+}
+async function runLight(){
+  const paces=(await loadLog('run')).filter(e=>(e.kind||'run')==='run'&&e.pace!=null).map(e=>e.pace);
+  if(paces.length<6) return {c:'grey', why:'building baseline'};
+  const a3=(paces[0]+paces[1]+paces[2])/3, p3=(paces[3]+paces[4]+paces[5])/3, d=a3-p3;
+  if(d<-10) return {c:'green', why:'pace improving'};
+  if(d>10) return {c:'red', why:'pace slipping'};
+  return {c:'yellow', why:'pace holding'};
+}
+async function parkrunLight(){
+  const pk=await loadLog('sat');
+  if(!pk.length) return {c:'grey', why:'no parkruns yet'};
+  const best=Math.min(...pk.map(e=>e.sec));
+  if(pk.slice(0,3).some(e=>e.sec===best)) return {c:'green', why:'PB within last 3'};
+  if(pk.length>=6){
+    const a3=(pk[0].pace+pk[1].pace+pk[2].pace)/3, p3=(pk[3].pace+pk[4].pace+pk[5].pace)/3;
+    if(a3-p3>10) return {c:'red', why:'slower than previous block'};
+  }
+  return {c:'yellow', why:'no PB in last 3'};
+}
+async function pushLight(lid){
+  const log=await loadLog(lid||'pushups');
+  return trendLight(log.filter(e=>(e.phase||'heavy')==='heavy'&&e.reps!=null).map(e=>e.reps), 0);
+}
+async function cindyLight(level){
+  const log=(await loadLog('cindy')).filter(e=>(e.level||'build')===level&&e.sec<=1259);
+  return trendLight(log.map(e=>e.p+e.pu+e.sq), 0);
+}
+async function carryLight(){
+  const w=await loadLog('weighin'); const bw=w.length? wTotal(w[0]) : null;
+  const cl=await loadLog('carry');
+  if(!bw||!cl.length) return {c:'grey', why:'building baseline'};
+  return trendLight(cl.map(e=>Math.min((e.w||0)/(0.5*bw),(e.sec||0)/60)), 0.02);
+}
 
 // ---------- cycle logic ----------
 function exIds(ex){ return [...new Set([ex.id, ...((ex.variants||[]).map(v=>v.id))])]; }
@@ -540,7 +637,7 @@ function liftCard(ex){
   }
   card.innerHTML=`
     <div class="card-top">
-      <div class="ex-name">${ex.name}${ex.variants?` <span style="color:var(--muted);font-weight:400">· ${(ex.variants.find(x=>x.id===logIdFor(ex))||{}).label||''}</span>`:''}</div>
+      <div class="ex-name">${ex.name}${ex.variants?` <span style="color:var(--muted);font-weight:400">· ${(ex.variants.find(x=>x.id===logIdFor(ex))||{}).label||''}</span>`:''}<span class="tl" data-tl title=""></span></div>
       <div class="badge ${ex.compound?'comp':''}">${ex.compound?'Compound':(ex.uni?'Single leg':'Isolation')}</div>
     </div>
     <div class="proto">${protoText(ex)}</div>
@@ -626,6 +723,9 @@ async function refreshLift(card, ex){
       suggEl.innerHTML=`🎯 No data yet — Heavy: work up to a 3-rep max. Volume: 3×${ex.repTarget||10} at roughly 60% of that. Your first log sets the baseline.`;
     }
   }
+  const hl=await liftLightFor(ex);
+  const tle=card.querySelector('[data-tl]'); if(tle){ tle.className='tl tl-'+hl.c; tle.title=hl.why; }
+  card.style.borderLeft='4px solid '+TLC[hl.c];
   const merged=mergeSessions(log);
   const lastEl=card.querySelector('[data-last]');
   const rel = merged.filter(e=>e.phase===state.phase);
@@ -677,7 +777,7 @@ function trackCard(ex){
   const lid=v.id, unit=v.unit;
   const rowHtml=(i)=>`<div class="setrow trk"><div class="n">${i+1}</div><div><input type="number" inputmode="numeric" placeholder="${unit}" data-v data-i="${i}"></div><button class="rm">×</button></div>`;
   let rows=''; for(let i=0;i<3;i++) rows+=rowHtml(i);
-  card.innerHTML=`<div class="card-top"><div class="ex-name">${ex.name} <span style="color:var(--muted);font-weight:400">· ${v.label}</span></div><div class="badge comp">Bodyweight</div></div>
+  card.innerHTML=`<div class="card-top"><div class="ex-name">${ex.name} <span style="color:var(--muted);font-weight:400">· ${v.label}</span><span class="tl" data-tl title=""></span></div><div class="badge comp">Bodyweight</div></div>
     <div class="seg mini" data-varseg style="margin-top:10px">${ex.variants.map(x=>`<button data-k="${x.key}" class="${x.key===v.key?'on':''}">${x.label}</button>`).join('')}</div>
     <div class="proto" style="margin-top:10px">${v.hint}</div>
     <div class="last" data-last></div>
@@ -706,6 +806,9 @@ function trackCard(ex){
 }
 async function refreshTrack(card,lid,unit){
   const log=await loadLog(lid);
+  const hl=await trackLight(lid);
+  const tle=card.querySelector('[data-tl]'); if(tle){ tle.className='tl tl-'+hl.c; tle.title=hl.why; }
+  card.style.borderLeft='4px solid '+TLC[hl.c];
   const lastEl=card.querySelector('[data-last]');
   const bestOf=(e)=>Math.max(...(e.sets||[]).map(s=>s.v||0));
   if(log.length){ const e=log[0]; lastEl.innerHTML=`<span>Last:</span> ${e.sets.map(s=>s.v).join(' / ')} ${unit} <span>· best ${bestOf(e)} (${fmtDate(e.date)})</span>`; }
@@ -731,7 +834,7 @@ function wTotal(e){ return e.total!=null?e.total:(e.wt!=null?e.wt:null); }
 function weighInCard(){
   const card=document.createElement('div'); card.className='card comp';
   card.innerHTML=`
-    <div class="card-top"><div class="ex-name">Weigh-In</div><div class="badge comp">Body</div></div>
+    <div class="card-top"><div class="ex-name">Weigh-In<span class="tl" data-tl title=""></span></div><div class="badge comp">Body</div></div>
     <div class="proto">Monday morning InBody — total, fat &amp; muscle weight.</div>
     <div class="last" data-last></div>
     <div class="runrow" style="grid-template-columns:1fr 1fr;margin-top:12px">
@@ -764,6 +867,9 @@ function weighInCard(){
 }
 async function refreshWeigh(card){
   const log=await loadLog('weighin');
+  const hl=await bodyLight();
+  const tle=card.querySelector('[data-tl]'); if(tle){ tle.className='tl tl-'+hl.c; tle.title=hl.why; }
+  card.style.borderLeft='4px solid '+TLC[hl.c];
   const lastEl=card.querySelector('[data-last]');
   if(log.length){
     const e=log[0]; const t=wTotal(e); let head=`<span>Last:</span> ${t!=null?t+' kg':'—'}`;
@@ -845,7 +951,7 @@ function pushupCard(){
     ? `<div class="row2" style="margin-top:11px"><div><label class="field-lab">Push-ups done</label><input type="number" inputmode="numeric" placeholder="0" data-reps></div><div><label class="field-lab">Date</label><input class="datein" type="date" data-date value="${todayISO()}"></div><button class="save">Log</button></div>`
     : `<div class="runrow" style="grid-template-columns:1fr 1fr 1fr;margin-top:11px"><div><label class="field-lab">Set 1</label><input type="number" inputmode="numeric" placeholder="0" data-s1></div><div><label class="field-lab">Set 2</label><input type="number" inputmode="numeric" placeholder="0" data-s2></div><div><label class="field-lab">Set 3</label><input type="number" inputmode="numeric" placeholder="0" data-s3></div></div>
        <div class="row2"><div><label class="field-lab">Date</label><input class="datein" type="date" data-date value="${todayISO()}"></div><button class="save">Log</button></div>`;
-  card.innerHTML=`<div class="card-top"><div class="ex-name" style="font-size:15px">Bare Minimum <span style="color:var(--muted);font-weight:400">· ${pv.label}</span></div><div class="badge">2:00 Push-ups</div></div>
+  card.innerHTML=`<div class="card-top"><div class="ex-name" style="font-size:15px">Bare Minimum <span style="color:var(--muted);font-weight:400">· ${pv.label}</span><span class="tl" data-tl title=""></span></div><div class="badge">2:00 Push-ups</div></div>
     <div class="seg mini" data-pseg style="margin-top:10px">${PUSH_VARIANTS.map(v=>`<button data-k="${v.key}" class="${v.key===pv.key?'on':''}">${v.label}</button>`).join('')}</div>
     <div class="proto">${proto}</div>
     <div class="timer" data-tdisp>2:00</div>
@@ -886,6 +992,9 @@ function pushupCard(){
 }
 async function refreshPush(card, lid){
   const log=await loadLog(lid);
+  const hl=await pushLight(lid);
+  const tle=card.querySelector('[data-tl]'); if(tle){ tle.className='tl tl-'+hl.c; tle.title=hl.why; }
+  card.style.borderLeft='4px solid '+TLC[hl.c];
   const lastEl=card.querySelector('[data-last]');
   const maxE=log.find(e=>(e.phase||'heavy')==='heavy' && e.reps!=null);
   const mx=maxE?maxE.reps:null;
@@ -930,7 +1039,7 @@ function cindyCard(){
   const card=document.createElement('div'); card.className='card comp';
   const key=state.variant['cindy']||'build';
   const lv=CINDY_LEVELS.find(x=>x.key===key)||CINDY_LEVELS[0];
-  card.innerHTML=`<div class="card-top"><div class="ex-name">Cindy <span style="color:var(--muted);font-weight:400">· ${lv.label}</span></div><div class="badge comp">20:00 AMRAP</div></div>
+  card.innerHTML=`<div class="card-top"><div class="ex-name">Cindy <span style="color:var(--muted);font-weight:400">· ${lv.label}</span><span class="tl" data-tl title=""></span></div><div class="badge comp">20:00 AMRAP</div></div>
     <div class="seg mini" data-lseg style="margin-top:10px">${CINDY_LEVELS.map(x=>`<button data-k="${x.key}" class="${x.key===lv.key?'on':''}">${x.label}</button>`).join('')}</div>
     <div class="proto"><b>${lv.desc}</b> — repeat for 20:00. Stop at the buzzer for a benchmark (B), or keep going to failure (F) — overtime is tracked.</div>
     <div class="timer" data-cdisp>20:00</div>
@@ -992,6 +1101,9 @@ function cindyCard(){
 function cindyRounds(e){ return Math.min(Math.floor(e.p/5), Math.floor(e.pu/10), Math.floor(e.sq/15)); }
 async function refreshCindy(card, level){
   const all=await loadLog('cindy');
+  const hl=await cindyLight(level);
+  const tle=card.querySelector('[data-tl]'); if(tle){ tle.className='tl tl-'+hl.c; tle.title=hl.why; }
+  card.style.borderLeft='4px solid '+TLC[hl.c];
   const log=all.filter(e=>(e.level||'build')===level);
   const lastEl=card.querySelector('[data-last]');
   if(log.length){ const e=log[0]; lastEl.innerHTML=`<span>Last:</span> <b>${cindyRounds(e)} rounds</b> · ${e.p}/${e.pu}/${e.sq} in ${fmtMS(e.sec)} <span>(${fmtDate(e.date)})</span>`; }
@@ -1029,8 +1141,9 @@ function cardioCard(){
     </div>
     <div class="proto">Log distance &amp; time — <b>pace is calculated automatically</b>.</div>
     <div class="last" data-last></div>
-    <div class="runrow" style="margin-top:12px">
+    <div class="runrow" style="margin-top:12px;grid-template-columns:1.2fr .8fr .8fr .8fr">
       <div><label class="field-lab" data-dlab>Distance (km)</label><input type="number" inputmode="decimal" placeholder="0.0" data-d></div>
+      <div><label class="field-lab">Hr</label><input type="number" inputmode="numeric" placeholder="0" data-hr></div>
       <div><label class="field-lab">Min</label><input type="number" inputmode="numeric" placeholder="0" data-min></div>
       <div><label class="field-lab">Sec</label><input type="number" inputmode="numeric" placeholder="0" data-sec></div>
     </div>
@@ -1041,12 +1154,12 @@ function cardioCard(){
     </div>
     <div class="hist-toggle"><span>Progress &amp; history</span><span class="arr">▾</span></div>
     <div class="hist"></div>`;
-  const dEl=card.querySelector('[data-d]'), mEl=card.querySelector('[data-min]'), sEl=card.querySelector('[data-sec]'), pEl=card.querySelector('[data-pace]');
+  const dEl=card.querySelector('[data-d]'), hEl=card.querySelector('[data-hr]'), mEl=card.querySelector('[data-min]'), sEl=card.querySelector('[data-sec]'), pEl=card.querySelector('[data-pace]');
   function calc(){
-    const dist=parseFloat(dEl.value), sec=(parseInt(mEl.value||0,10)*60)+(parseInt(sEl.value||0,10));
+    const dist=parseFloat(dEl.value), sec=(parseInt(hEl.value||0,10)*3600)+(parseInt(mEl.value||0,10)*60)+(parseInt(sEl.value||0,10));
     pEl.innerHTML=(dist>0&&sec>0)?fmtPace(sec/dist)+'<small> /km</small>':'—<small> /km</small>';
   }
-  [dEl,mEl,sEl].forEach(i=>i.oninput=calc);
+  [dEl,hEl,mEl,sEl].forEach(i=>i.oninput=calc);
   function kindUI(){
     const hiit=state.runKind==='hiit';
     card.querySelector('[data-dlab]').textContent = hiit? 'Calories' : 'Distance (km)';
@@ -1061,7 +1174,7 @@ function cardioCard(){
   });
   card.querySelector('.save').onclick=async()=>{
     const date=card.querySelector('[data-date]').value||todayISO();
-    const dist=parseFloat(dEl.value), sec=(parseInt(mEl.value||0,10)*60)+(parseInt(sEl.value||0,10));
+    const dist=parseFloat(dEl.value), sec=(parseInt(hEl.value||0,10)*3600)+(parseInt(mEl.value||0,10)*60)+(parseInt(sEl.value||0,10));
     if(!(sec>0) || (state.runKind!=='hiit' && !(dist>0))){ toast(state.runKind==='hiit'?'Enter your time':'Enter distance & time'); return; }
     const log=await loadLog('run');
     if(card._edit){ const i=log.indexOf(card._edit); if(i>-1) log.splice(i,1); card._edit=null; }
@@ -1071,7 +1184,7 @@ function cardioCard(){
     log.push(entry);
     log.sort((a,b)=>a.date<b.date?1:-1);
     await sset('log:run', log);
-    dEl.value=mEl.value=sEl.value=''; calc();
+    dEl.value=hEl.value=mEl.value=sEl.value=''; calc();
     toast('Saved ✓'); refreshCardio(card);
   };
   card.querySelector('.hist-toggle').onclick=(e)=>{e.currentTarget.classList.toggle('open');card.querySelector('.hist').classList.toggle('open');state.open['run']=card.querySelector('.hist').classList.contains('open');};
@@ -1086,7 +1199,7 @@ async function refreshCardio(card){
   const sel=ofKind(state.runKind);
   if(sel.length){ const e=sel[0];
     lastEl.innerHTML = e.pace!=null
-      ? `<span>Last ${state.runKind}:</span> ${e.distance}km in ${fmtPace(e.sec)} · ${fmtPace(e.pace)}<span>/km (${fmtDate(e.date)})</span>`
+      ? `<span>Last ${state.runKind}:</span> ${e.distance}km in ${fmtDur(e.sec)} · ${fmtPace(e.pace)}<span>/km (${fmtDate(e.date)})</span>`
       : `<span>Last ${state.runKind}:</span> ${e.cal!=null? e.cal+' cal · ':''}${Math.round(e.sec/60)} min <span>(${fmtDate(e.date)})</span>`; }
   else lastEl.innerHTML=`<span>No ${state.runKind}s logged yet.</span>`;
   const hist=card.querySelector('.hist'); hist.innerHTML='';
@@ -1106,12 +1219,13 @@ async function refreshCardio(card){
   log.slice(0,14).forEach(e=>{
     const kk=(e.kind||'run');
     const tagd = kk==='hike'?'<span class="ph g">H</span>':(kk==='hiit'?'<span class="ph h">HI</span>':'<span class="ph v">R</span>');
-    const vtxt = e.pace!=null ? `${e.distance}km · ${fmtPace(e.sec)} · ${fmtPace(e.pace)}/km` : `${e.cal!=null? e.cal+' cal · ':''}${Math.round(e.sec/60)} min`;
+    const vtxt = e.pace!=null ? `${e.distance}km · ${fmtDur(e.sec)} · ${fmtPace(e.pace)}/km` : `${e.cal!=null? e.cal+' cal · ':''}${Math.round(e.sec/60)} min`;
     const row=document.createElement('div'); row.className='entry';
     row.innerHTML=`<div class="dt">${fmtDate(e.date)}${tagd}</div><div class="v">${vtxt} <span class="edx">✎</span><span class="delx">×</span></div>`;
     row.querySelector('.edx').onclick=async()=>{
       card.querySelector('[data-d]').value=(e.kind==='hiit'? e.cal : e.distance)??'';
-      card.querySelector('[data-min]').value=Math.floor(e.sec/60);
+      card.querySelector('[data-hr]').value=Math.floor(e.sec/3600)||'';
+      card.querySelector('[data-min]').value=Math.floor((e.sec%3600)/60);
       card.querySelector('[data-sec]').value=Math.round(e.sec%60);
       card.querySelector('[data-date]').value=e.date;
       state.runKind=e.kind||'run'; await saveSettings();
@@ -1210,10 +1324,10 @@ function extraSection(){
       const addRow=()=>{const i=xs.children.length;const r=document.createElement('div');r.className='setrow';r.innerHTML=`<div class="n">${i+1}</div><div><input type="number" inputmode="decimal" placeholder="kg" data-f="w"></div><div><input type="number" inputmode="numeric" placeholder="reps" data-f="r"></div><button class="rm">×</button>`;r.querySelector('.rm').onclick=()=>r.remove();xs.appendChild(r);};
       addRow(); card.querySelector('#xadd').onclick=addRow;
     } else {
-      inputsEl.innerHTML=`<div class="runrow"><div><label class="field-lab">Distance (km)</label><input type="number" inputmode="decimal" placeholder="0.0" data-d></div><div><label class="field-lab">Min</label><input type="number" inputmode="numeric" placeholder="0" data-min></div><div><label class="field-lab">Sec</label><input type="number" inputmode="numeric" placeholder="0" data-sec></div></div><div class="pace"><span class="lab">Pace</span><span class="val" data-pace>—<small> /km</small></span></div>`;
-      const dEl=inputsEl.querySelector('[data-d]'),mEl=inputsEl.querySelector('[data-min]'),sEl=inputsEl.querySelector('[data-sec]'),pEl=inputsEl.querySelector('[data-pace]');
-      const calc=()=>{const dist=parseFloat(dEl.value),sec=(parseInt(mEl.value||0,10)*60)+(parseInt(sEl.value||0,10));pEl.innerHTML=(dist>0&&sec>0)?fmtPace(sec/dist)+'<small> /km</small>':'—<small> /km</small>';};
-      [dEl,mEl,sEl].forEach(i=>i.oninput=calc);
+      inputsEl.innerHTML=`<div class="runrow" style="grid-template-columns:1.2fr .8fr .8fr .8fr"><div><label class="field-lab">Distance (km)</label><input type="number" inputmode="decimal" placeholder="0.0" data-d></div><div><label class="field-lab">Hr</label><input type="number" inputmode="numeric" placeholder="0" data-xhr></div><div><label class="field-lab">Min</label><input type="number" inputmode="numeric" placeholder="0" data-min></div><div><label class="field-lab">Sec</label><input type="number" inputmode="numeric" placeholder="0" data-sec></div></div><div class="pace"><span class="lab">Pace</span><span class="val" data-pace>—<small> /km</small></span></div>`;
+      const dEl=inputsEl.querySelector('[data-d]'),hEl=inputsEl.querySelector('[data-xhr]'),mEl=inputsEl.querySelector('[data-min]'),sEl=inputsEl.querySelector('[data-sec]'),pEl=inputsEl.querySelector('[data-pace]');
+      const calc=()=>{const dist=parseFloat(dEl.value),sec=(parseInt(hEl.value||0,10)*3600)+(parseInt(mEl.value||0,10)*60)+(parseInt(sEl.value||0,10));pEl.innerHTML=(dist>0&&sec>0)?fmtPace(sec/dist)+'<small> /km</small>':'—<small> /km</small>';};
+      [dEl,hEl,mEl,sEl].forEach(i=>i.oninput=calc);
     }
   }
   renderInputs();
@@ -1227,7 +1341,7 @@ function extraSection(){
       const sets=[];card.querySelectorAll('#xsets .setrow').forEach(r=>{const w=parseFloat(r.querySelector('[data-f="w"]').value);const reps=parseInt(r.querySelector('[data-f="r"]').value,10);if(!isNaN(w)||!isNaN(reps))sets.push({w:isNaN(w)?null:w,reps:isNaN(reps)?null:reps});});
       if(!sets.length){toast('Enter a set');return;} entry.sets=sets;
     } else {
-      const dist=parseFloat(inputsEl.querySelector('[data-d]').value);const sec=(parseInt(inputsEl.querySelector('[data-min]').value||0,10)*60)+(parseInt(inputsEl.querySelector('[data-sec]').value||0,10));
+      const dist=parseFloat(inputsEl.querySelector('[data-d]').value);const sec=(parseInt((inputsEl.querySelector('[data-xhr]')||{}).value||0,10)*3600)+(parseInt(inputsEl.querySelector('[data-min]').value||0,10)*60)+(parseInt(inputsEl.querySelector('[data-sec]').value||0,10));
       if(!(dist>0)||!(sec>0)){toast('Enter distance & time');return;} entry.distance=dist;entry.sec=sec;entry.pace=sec/dist;
     }
     const log=await loadLog('extra'); log.push(entry); log.sort((a,b)=>a.date<b.date?1:-1);
@@ -1259,7 +1373,7 @@ async function renderExtraHist(box){
     }
     items.slice(0,12).forEach(e=>{
       const row=document.createElement('div');row.className='entry';
-      const v = g.kind==='strength' ? e.sets.map(fmtSet).join('  ') : `${e.distance}km · ${fmtPace(e.sec)} · ${fmtPace(e.pace)}/km`;
+      const v = g.kind==='strength' ? e.sets.map(fmtSet).join('  ') : `${e.distance}km · ${fmtDur(e.sec)} · ${fmtPace(e.pace)}/km`;
       row.innerHTML=`<div class="dt">${fmtDate(e.date)}</div><div class="v">${v} <span class="delx">×</span></div>`;
       row.querySelector('.delx').onclick=async()=>{const real=await loadLog('extra');const i=real.indexOf(e);if(i>-1){real.splice(i,1);await sset('log:extra',real);renderExtraHist(box);}};
       card.appendChild(row);
@@ -1290,7 +1404,7 @@ function fatigueCard(f){
 // ---------- farmer's carry ----------
 function carryCard(){
   const card=document.createElement('div'); card.className='card comp';
-  card.innerHTML=`<div class="card-top"><div class="ex-name">Farmer's Carry</div><div class="badge comp">Grip · Core</div></div>
+  card.innerHTML=`<div class="card-top"><div class="ex-name">Farmer's Carry<span class="tl" data-tl title=""></span></div><div class="badge comp">Grip · Core</div></div>
     <div class="proto">Heavy in each hand, walk or hold. Goal: <b>50% BW per hand for 1:00</b>. Log the per-hand weight and time held.</div>
     <div class="last" data-last></div>
     <div class="runrow" style="margin-top:12px">
@@ -1319,6 +1433,9 @@ function carryCard(){
 }
 async function refreshCarry(card){
   const log=await loadLog('carry');
+  const hl=await carryLight();
+  const tle=card.querySelector('[data-tl]'); if(tle){ tle.className='tl tl-'+hl.c; tle.title=hl.why; }
+  card.style.borderLeft='4px solid '+TLC[hl.c];
   const lastEl=card.querySelector('[data-last]');
   if(log.length){ const e=log[0]; lastEl.innerHTML=`<span>Last:</span> <b>${e.w}kg</b>/hand × <b>${e.sec}s</b> <span>(${fmtDate(e.date)})</span>`; }
   else lastEl.innerHTML='<span>No carries logged yet.</span>';
@@ -1363,36 +1480,36 @@ async function goalsCard(){
   // a goal is DONE only when a qualifying set is actually in the log
   const demoSet=async(id,wNeed,rNeed)=>{ const lg=await loadLog(id); return lg.some(e=>(e.sets||[]).some(x=>x.w!=null&&x.w>=wNeed-1e-9&&(effReps(x)||0)>=rNeed)); };
   const rows=[];
-  const add=(name,target,cur,goal,curTxt,done)=>{ const pct=done?100:((cur!=null&&goal>0)? Math.min(100,cur/goal*100):0); rows.push({name,target,curTxt,pct,done:!!done}); };
+  const add=(name,target,cur,goal,curTxt,done,light)=>{ const pct=done?100:((cur!=null&&goal>0)? Math.min(100,cur/goal*100):0); rows.push({name,target,curTxt,pct,done:!!done,lc:done?'green':((light&&light.c)||'grey')}); };
   let v;
-  v=await ev('incpress'); add('Bench Press','BW × 10', v?v.one:null, bw*(1+10/30), v?`${v.txt} · goal set: ${Math.round(bw)}kg × 10`:'no data', await demoSet('incpress', bw, 10));
-  v=await ev('squat');    add('Squat','150% BW × 3', v?v.three:null, 1.5*bw, v?`${v.txt} · goal set: ${Math.round(1.5*bw)}kg × 3`:'no data', await demoSet('squat', 1.5*bw, 3));
-  v=await ev('dead');     add('Deadlift','200% BW × 3', v?v.three:null, 2*bw, v?`${v.txt} · goal set: ${Math.round(2*bw)}kg × 3`:'no data', await demoSet('dead', 2*bw, 3));
-  v=await ev('ohp');      add('Overhead Press','50% BW × 10', v?v.one:null, 0.5*bw*(1+10/30), v?`${v.txt} · goal set: ${Math.round(0.5*bw)}kg × 10`:'no data', await demoSet('ohp', 0.5*bw, 10));
-  v=await ev('row_bb');   add('Barbell Row','50% BW × 25', v?v.one:null, 0.5*bw*(1+25/30), v?`${v.txt} · goal set: ${Math.round(0.5*bw)}kg × 25`:'log barbell rows to start', await demoSet('row_bb', 0.5*bw, 25));
-  const pb=await bestV('pullup');  add('Pull-ups','BW × 10', pb, 10, `${pb} / 10 reps`, pb>=10);
-  const db=await bestV('dips_bw'); add('Dips','BW × 25', db, 25, `${db} / 25 reps`, db>=25);
-  const hang=await bestV('pullup_hang'); add('Dead Hang','2:00 hold', hang, 120, `${hang}s / 120s`, hang>=120);
+  v=await ev('incpress'); add('Bench Press','BW × 10', v?v.one:null, bw*(1+10/30), v?`${v.txt} · goal set: ${Math.round(bw)}kg × 10`:'no data', await demoSet('incpress', bw, 10), await liftLight('incpress',5,10));
+  v=await ev('squat');    add('Squat','150% BW × 3', v?v.three:null, 1.5*bw, v?`${v.txt} · goal set: ${Math.round(1.5*bw)}kg × 3`:'no data', await demoSet('squat', 1.5*bw, 3), await liftLight('squat',5,10));
+  v=await ev('dead');     add('Deadlift','200% BW × 3', v?v.three:null, 2*bw, v?`${v.txt} · goal set: ${Math.round(2*bw)}kg × 3`:'no data', await demoSet('dead', 2*bw, 3), await liftLight('dead',5,10));
+  v=await ev('ohp');      add('Overhead Press','50% BW × 10', v?v.one:null, 0.5*bw*(1+10/30), v?`${v.txt} · goal set: ${Math.round(0.5*bw)}kg × 10`:'no data', await demoSet('ohp', 0.5*bw, 10), await liftLight('ohp',5,10));
+  v=await ev('row_bb');   add('Barbell Row','50% BW × 25', v?v.one:null, 0.5*bw*(1+25/30), v?`${v.txt} · goal set: ${Math.round(0.5*bw)}kg × 25`:'log barbell rows to start', await demoSet('row_bb', 0.5*bw, 25), await liftLight('row_bb',5,10));
+  const pb=await bestV('pullup');  add('Pull-ups','BW × 10', pb, 10, `${pb} / 10 reps`, pb>=10, await trackLight('pullup'));
+  const db=await bestV('dips_bw'); add('Dips','BW × 25', db, 25, `${db} / 25 reps`, db>=25, await trackLight('dips_bw'));
+  const hang=await bestV('pullup_hang'); add('Dead Hang','2:00 hold', hang, 120, `${hang}s / 120s`, hang>=120, await trackLight('pullup_hang'));
   const cl=await loadLog('carry');
   let cb=null; cl.forEach(e=>{ const sc=Math.min((e.w||0)/(0.5*bw), (e.sec||0)/60); if(!cb||sc>cb.sc) cb={sc,e}; });
-  add("Farmer's Carry",'50% BW/hand × 1:00', cb?cb.sc:null, 1, cb?`best ${cb.e.w}kg × ${cb.e.sec}s (need ${Math.round(0.5*bw)}kg × 60s)`:'no carries logged', !!(cb&&cb.sc>=1));
+  add("Farmer's Carry",'50% BW/hand × 1:00', cb?cb.sc:null, 1, cb?`best ${cb.e.w}kg × ${cb.e.sec}s (need ${Math.round(0.5*bw)}kg × 60s)`:'no carries logged', !!(cb&&cb.sc>=1), await carryLight());
   // running goals — progress measured against goal pace (goal pace / your pace)
   const pk=await loadLog('sat');
   const best5=pk.length? pk.filter(e=>e.distance>=4.9).reduce((a,e)=>(!a||e.sec<a.sec)?e:a,null) : null;
-  add('5 km','sub 25:00', best5? (1500/best5.sec*100):null, 100, best5? `PB ${fmtMS(best5.sec)} (${fmtDate(best5.date)}) / 25:00` : 'no 5 km logged', !!(best5&&best5.sec<=1500));
+  add('5 km','sub 25:00', best5? (1500/best5.sec*100):null, 100, best5? `PB ${fmtMS(best5.sec)} (${fmtDate(best5.date)}) / 25:00` : 'no 5 km logged', !!(best5&&best5.sec<=1500), await parkrunLight());
   const rl=await loadLog('run');
   const longs=rl.filter(e=>(e.kind||'run')==='run' && e.distance>=10);
   const bestLong=longs.length? longs.reduce((a,e)=>(!a||e.pace<a.pace)?e:a,null):null;
   const goalPace=7200/21.1; // 5:41/km for sub-2hr half
   const realHalf=rl.some(e=>(e.kind||'run')==='run'&&e.distance>=21&&e.sec<=7200);
-  add('Half marathon','sub 2:00:00', bestLong? (goalPace/bestLong.pace*100):null, 100, bestLong? `best 10km+ pace ${fmtPace(bestLong.pace)}/km · need ${fmtPace(goalPace)}/km over 21.1km` : 'log a 10 km+ run to start tracking', realHalf);
+  add('Half marathon','sub 2:00:00', bestLong? (goalPace/bestLong.pace*100):null, 100, bestLong? `best 10km+ pace ${fmtPace(bestLong.pace)}/km · need ${fmtPace(goalPace)}/km over 21.1km` : 'log a 10 km+ run to start tracking', realHalf, trendLight(longs.map(e=>-e.pace), 10));
   card.innerHTML=`<div class="card-top"><div class="ex-name">Goals</div><div class="badge comp">@ BW ${bw}kg</div></div>`+
     rows.map(r=>`<div style="margin-top:12px">
       <div style="display:flex;justify-content:space-between;align-items:baseline;font-family:'JetBrains Mono',monospace;font-size:11px">
-        <span style="color:var(--ink)">${r.name} <span style="color:var(--muted)">· ${r.target}</span></span>
-        <span style="color:var(--acid)">${r.done?'✓ DONE':Math.round(r.pct)+'%'}</span>
+        <span style="color:var(--ink)"><span class="tl tl-${r.lc}" style="margin-left:0;margin-right:6px"></span>${r.name} <span style="color:var(--muted)">· ${r.target}</span></span>
+        <span style="color:${TLC[r.lc]}">${r.done?'✓ DONE':Math.round(r.pct)+'%'}</span>
       </div>
-      <div class="wkbar" style="margin-top:5px"><div class="wkbar-fill" style="width:${r.pct}%"></div></div>
+      <div class="wkbar" style="margin-top:5px"><div class="wkbar-fill" style="width:${r.pct}%;background:${TLC[r.lc]}"></div></div>
       <div style="font-family:'JetBrains Mono',monospace;font-size:9px;color:var(--muted);margin-top:3px">${r.curTxt}</div>
     </div>`).join('')+
     `<div class="proto" style="margin-top:13px">Standard: controlled up &amp; down — no yanking or jerking. Targets move with your bodyweight: as you cut, they come closer.</div>`;
@@ -1407,7 +1524,7 @@ function scoreSection(){
     if(fat.n>=2) wrap.appendChild(fatigueCard(fat));
     wrap.appendChild(await goalsCard());
     const sc=document.createElement('div'); sc.className='card';
-    sc.innerHTML='<div class="card-top"><div class="ex-name">Strength</div><div class="badge comp">Current max</div></div><div data-rows></div><div class="proto" style="margin-top:8px">↑ increase earned · → repeat · ↓ reset due</div>';
+    sc.innerHTML='<div class="card-top"><div class="ex-name">Strength</div><div class="badge comp">Current max</div></div><div data-rows></div><div class="proto" style="margin-top:8px"><span class="tl tl-green" style="margin-left:0"></span> on track &nbsp;&nbsp;<span class="tl tl-yellow" style="margin-left:0"></span> holding &nbsp;&nbsp;<span class="tl tl-red" style="margin-left:0"></span> falling behind &nbsp;&nbsp;<span class="tl tl-grey" style="margin-left:0"></span> building</div>';
     const rows=sc.querySelector('[data-rows]');
     for(const plan of PLANS){
       for(const ex of plan.exercises){
@@ -1418,18 +1535,14 @@ function scoreSection(){
         const log=await loadLog(lid);
         const row=document.createElement('div'); row.className='entry';
         const nm = ex.name.replace(' (each leg)','')+(v?` · ${v.label}`:'');
+        const lt=await liftLightFor(ex);
         if(isTrack){
           const bestOf=(e)=>Math.max(...(e.sets||[]).map(x=>x.v||0));
           const b = log.length? bestOf(log[0]) : null;
-          row.innerHTML=`<div class="dt">${nm}</div><div class="v">${b!=null? 'best '+b+' '+((v&&v.unit)||''):'—'}</div>`;
+          row.innerHTML=`<div class="dt">${nm}</div><div class="v"><span style="color:${TLC[lt.c]}">${b!=null? 'best '+b+' '+((v&&v.unit)||''):'—'}</span>${tlDot(lt)}</div>`;
         } else {
           const mx=currentMax(log, incFor(ex), ex.repTarget||10);
-          let stat='—';
-          if(mx){
-            const arrow = mx.deload? `<span style="color:var(--heavy)">↓</span>` : (mx.incremented? `<span style="color:var(--acid)">↑</span>` : `<span style="color:var(--muted)">→</span>`);
-            stat=`${mx.max}kg ${arrow}`;
-          }
-          row.innerHTML=`<div class="dt">${nm}</div><div class="v">${stat}</div>`;
+          row.innerHTML=`<div class="dt">${nm}</div><div class="v"><span style="color:${TLC[lt.c]}">${mx? (mx.estimated?'~':'')+mx.max+'kg':'—'}</span>${tlDot(lt)}</div>`;
         }
         rows.appendChild(row);
       }
@@ -1449,7 +1562,8 @@ function scoreSection(){
       ${bf!=null?`<div class="entry"><div class="dt">Body fat</div><div class="v">${bf.toFixed(1)}% <span style="color:var(--muted)">→ goal 12.5%</span></div></div>`:''}
       ${e.waist!=null?`<div class="entry"><div class="dt">Waist</div><div class="v">${e.waist} cm${prev&&prev.waist!=null?fmtD(e.waist,prev.waist):''}</div></div>`:''}`;
     }
-    bc.innerHTML=`<div class="card-top"><div class="ex-name">Body</div><div class="badge comp">Latest weigh-in</div></div>`+bhtml;
+    const blgt=await bodyLight();
+    bc.innerHTML=`<div class="card-top"><div class="ex-name">Body${tlDot(blgt)}</div><div class="badge comp">Latest weigh-in</div></div>`+bhtml;
     wrap.appendChild(bc);
 
     const rl=await loadLog('run'), pk=await loadLog('sat');
@@ -1458,17 +1572,19 @@ function scoreSection(){
     const runs=rl.filter(e=>(e.kind||'run')==='run'), hikes=rl.filter(e=>e.kind==='hike');
     const bestRun = runs.length? Math.min(...runs.map(e=>e.pace)) : null;
     const pb = pk.length? pk.reduce((a,e)=> e.sec<a.sec? e:a, pk[0]) : null;
+    const rlgt=await runLight(), pklgt=await parkrunLight();
     cc.innerHTML=`<div class="card-top"><div class="ex-name">Cardio</div><div class="badge comp">All time</div></div>
-      <div class="entry"><div class="dt">Runs (${runs.length})</div><div class="v">${runs.length?('avg '+fmtPace(agg(runs))+'/km · best '+fmtPace(bestRun)):'—'}</div></div>
+      <div class="entry"><div class="dt">Runs (${runs.length})</div><div class="v">${runs.length?('avg '+fmtPace(agg(runs))+'/km · best '+fmtPace(bestRun)):'—'}${tlDot(rlgt)}</div></div>
       <div class="entry"><div class="dt">Hikes (${hikes.length})</div><div class="v">${hikes.length?('avg '+fmtPace(agg(hikes))+'/km'):'—'}</div></div>
-      <div class="entry"><div class="dt">Parkrun PB</div><div class="v">${pb?(fmtPace(pb.sec)+' · '+fmtPace(pb.pace)+'/km ('+fmtDate(pb.date)+')'):'—'}</div></div>`;
+      <div class="entry"><div class="dt">Parkrun PB</div><div class="v">${pb?(fmtPace(pb.sec)+' · '+fmtPace(pb.pace)+'/km ('+fmtDate(pb.date)+')'):'—'}${tlDot(pklgt)}</div></div>`;
     wrap.appendChild(cc);
 
     const pu=await loadLog('pushups');
     const maxE=pu.find(e=>(e.phase||'heavy')==='heavy'&&e.reps!=null);
     const pc=document.createElement('div'); pc.className='card';
+    const pulgt=await pushLight('pushups');
     pc.innerHTML=`<div class="card-top"><div class="ex-name">Push-ups</div><div class="badge comp">2:00 max</div></div>
-      <div class="entry"><div class="dt">Max</div><div class="v">${maxE? maxE.reps+' reps ('+fmtDate(maxE.date)+')':'—'}</div></div>`;
+      <div class="entry"><div class="dt">Max</div><div class="v">${maxE? maxE.reps+' reps ('+fmtDate(maxE.date)+')':'—'}${tlDot(pulgt)}</div></div>`;
     wrap.appendChild(pc);
   })();
   return wrap;
@@ -1571,7 +1687,19 @@ async function doExport(){
   try{
     const data={};
     for(let i=0;i<localStorage.length;i++){ const k=localStorage.key(i); if(k&&k.startsWith(PREFIX)) data[k]=localStorage.getItem(k); }
-    const blob=new Blob([JSON.stringify({app:'exercise-log',exported:todayISO(),data},null,1)],{type:'application/json'});
+    const traffic={};
+    const put=(name,l)=>{ traffic[name]=l.c+' | '+l.why; };
+    for(const plan of PLANS){ for(const ex of plan.exercises){
+      let v=null; if(ex.variants){ const key=state.variant[ex.id]||ex.variants[0].key; v=ex.variants.find(x=>x.key===key)||ex.variants[0]; }
+      put(ex.name+(v?' · '+v.label:''), await liftLightFor(ex));
+    }}
+    put('Push-ups (Standard)', await pushLight('pushups'));
+    put('Body composition', await bodyLight());
+    put('Runs', await runLight());
+    put('Parkrun', await parkrunLight());
+    put('Cindy (Build)', await cindyLight('build'));
+    put("Farmer's Carry", await carryLight());
+    const blob=new Blob([JSON.stringify({app:'exercise-log',exported:todayISO(),traffic,data},null,1)],{type:'application/json'});
     const a=document.createElement('a'); a.href=URL.createObjectURL(blob); a.download='exercise-log-backup-'+todayISO()+'.json';
     document.body.appendChild(a); a.click(); a.remove();
     await sset('exportMeta',{last:todayISO()});
