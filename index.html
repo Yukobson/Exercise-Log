@@ -328,11 +328,11 @@ function currentMax(log, inc, rt){
   const sessionOK=(e)=>sessionPass(e, rt);
   // replay oldest → newest: heavy sessions anchor the max to the attempted
   // weight; every successful session (heavy or volume) stacks +inc
-  let M=null, lastOK=false, sawHeavy=false, ep=0;
+  let M=null, lastOK=false, sawHeavy=false, ep=0, P=null;
   for(const e of merged.slice().reverse()){
     const b=bestSet(e); if(!b) continue;
     if(b.w&&b.reps) ep=Math.max(ep, b.w*(1+b.reps/30));
-    if(e.phase==='heavy'){ M=b.w; sawHeavy=true; }
+    if(e.phase==='heavy'){ M=b.w; sawHeavy=true; if(b.reps!=null&&b.reps>=3) P=Math.max(P||0, b.w); }
     else if(M==null){ M=roundTo(b.w/0.6, inc); }
     lastOK=sessionOK(e);
     if(lastOK) M+=inc;
@@ -344,9 +344,9 @@ function currentMax(log, inc, rt){
   for(const e of merged){ if(!bestSet(e)) continue; if(sessionOK(e)) break; miss++; }
   if(miss>=3){
     const dl=Math.max(inc, roundTo(M*0.10, inc));
-    return { max: Math.max(inc, M-dl), deload:true, missStreak:miss, inc, rt, estimated:est, est3 };
+    return { max: Math.max(inc, M-dl), deload:true, missStreak:miss, inc, rt, estimated:est, est3, proven:P };
   }
-  return { max: M, incremented: lastOK, inc, rt, estimated:est, est3 };
+  return { max: M, incremented: lastOK, inc, rt, estimated:est, est3, proven:P };
 }
 function suggestSets(mx){
   const M=mx.max, inc=mx.inc||5, rt=mx.rt||10, w60=Math.max(inc,roundTo(M*0.6,inc)), w80=roundTo(M*0.8,inc);
@@ -1470,8 +1470,7 @@ async function goalsCard(){
   const ev=async(id)=>{
     const log=await loadLog(id);
     const mx=currentMax(log,5,10);
-    if(mx&&!mx.estimated&&!mx.deload) return {one:mx.max*1.1, three:mx.max, txt:`max ${mx.max}kg`};
-    if(mx&&!mx.estimated&&mx.deload) return {one:mx.max*1.1, three:mx.max, txt:`max ${mx.max}kg (reset)`};
+    if(mx&&mx.proven!=null) return {one:mx.proven*1.1, three:mx.proven, txt:`proven ${mx.proven}kg × 3`};
     let ep=0,bs=null; mergeSessions(log).forEach(e=>{const b=bestSet(e); if(b&&b.w&&b.reps){const v=b.w*(1+b.reps/30); if(v>ep){ep=v;bs=b;}}});
     if(!ep) return null;
     return {one:ep, three:ep/1.1, txt:`best ${bs.w}kg × ${bs.reps} (untested)`};
@@ -1524,7 +1523,7 @@ function scoreSection(){
     if(fat.n>=2) wrap.appendChild(fatigueCard(fat));
     wrap.appendChild(await goalsCard());
     const sc=document.createElement('div'); sc.className='card';
-    sc.innerHTML='<div class="card-top"><div class="ex-name">Strength</div><div class="badge comp">Current max</div></div><div data-rows></div><div class="proto" style="margin-top:8px"><span class="tl tl-green" style="margin-left:0"></span> on track &nbsp;&nbsp;<span class="tl tl-yellow" style="margin-left:0"></span> holding &nbsp;&nbsp;<span class="tl tl-red" style="margin-left:0"></span> falling behind &nbsp;&nbsp;<span class="tl tl-grey" style="margin-left:0"></span> building</div>';
+    sc.innerHTML='<div class="card-top"><div class="ex-name">Strength</div><div class="badge comp">Proven → target</div></div><div data-rows></div><div class="proto" style="margin-top:8px"><span class="tl tl-green" style="margin-left:0"></span> on track &nbsp;&nbsp;<span class="tl tl-yellow" style="margin-left:0"></span> holding &nbsp;&nbsp;<span class="tl tl-red" style="margin-left:0"></span> falling behind &nbsp;&nbsp;<span class="tl tl-grey" style="margin-left:0"></span> building</div>';
     const rows=sc.querySelector('[data-rows]');
     for(const plan of PLANS){
       for(const ex of plan.exercises){
@@ -1542,7 +1541,8 @@ function scoreSection(){
           row.innerHTML=`<div class="dt">${nm}</div><div class="v"><span style="color:${TLC[lt.c]}">${b!=null? 'best '+b+' '+((v&&v.unit)||''):'—'}</span>${tlDot(lt)}</div>`;
         } else {
           const mx=currentMax(log, incFor(ex), ex.repTarget||10);
-          row.innerHTML=`<div class="dt">${nm}</div><div class="v"><span style="color:${TLC[lt.c]}">${mx? (mx.estimated?'~':'')+mx.max+'kg':'—'}</span>${tlDot(lt)}</div>`;
+          const disp = !mx ? '—' : (mx.estimated ? '~'+mx.max+'kg' : (mx.proven!=null && mx.proven!==mx.max ? mx.proven+' → '+mx.max+'kg' : mx.max+'kg'));
+          row.innerHTML=`<div class="dt">${nm}</div><div class="v"><span style="color:${TLC[lt.c]}">${disp}</span>${tlDot(lt)}</div>`;
         }
         rows.appendChild(row);
       }
