@@ -316,30 +316,37 @@ function currentMax(log, inc, rt){
     : volSuccess(e, rt);
   // replay oldest → newest: heavy sessions anchor the max to the attempted
   // weight; every successful session (heavy or volume) stacks +inc
-  let M=null, lastOK=false;
+  let M=null, lastOK=false, sawHeavy=false, ep=0;
   for(const e of merged.slice().reverse()){
     const b=bestSet(e); if(!b) continue;
-    if(e.phase==='heavy'){ M=b.w; }
+    if(b.w&&b.reps) ep=Math.max(ep, b.w*(1+b.reps/30));
+    if(e.phase==='heavy'){ M=b.w; sawHeavy=true; }
     else if(M==null){ M=roundTo(b.w/0.6, inc); }
     lastOK=sessionOK(e);
     if(lastOK) M+=inc;
   }
   if(!(M>0)) return null;
+  const est=!sawHeavy;
+  const est3=est&&ep? Math.max(inc, roundTo(ep/1.1, inc)) : undefined;
   let miss=0;
   for(const e of merged){ if(!bestSet(e)) continue; if(sessionOK(e)) break; miss++; }
   if(miss>=3){
     const dl=Math.max(inc, roundTo(M*0.10, inc));
-    return { max: Math.max(inc, M-dl), deload:true, missStreak:miss, inc, rt };
+    return { max: Math.max(inc, M-dl), deload:true, missStreak:miss, inc, rt, estimated:est, est3 };
   }
-  return { max: M, incremented: lastOK, inc, rt };
+  return { max: M, incremented: lastOK, inc, rt, estimated:est, est3 };
 }
 function suggestSets(mx){
   const M=mx.max, inc=mx.inc||5, rt=mx.rt||10, w60=Math.max(inc,roundTo(M*0.6,inc)), w80=roundTo(M*0.8,inc);
   const tag = mx.deload ? ` <b style="color:var(--heavy)">(reset ↓ after ${mx.missStreak} misses)</b>` : (mx.incremented ? ` <b>(+${inc} ✓)</b>` : '');
   if(state.phase==='heavy'){
+    if(mx.estimated){
+      const t3=mx.est3||M, b60=Math.max(inc,roundTo(t3*0.6,inc)), b80=roundTo(t3*0.8,inc);
+      return { line:`Est max <b>~${M}kg</b> (from volume — untested) · build ${b60} → ${b80} · then find your <b>3-rep top set</b> (realistic ~${t3}kg) — whatever you log becomes the real max`, per:[b60,b80,t3] };
+    }
     return { line:`Max <b>${M}kg</b>${tag} · build ${w60} → ${w80} → <b>top ${M}kg × 3</b> · hit it → next max ${M+inc}kg`, per:[w60,w80,M] };
   }
-  return { line:`Max <b>${M}kg</b>${tag} · <b>3 × ${rt} @ ${w60}kg</b> (60%) · all 3×${rt} → max ${M+inc}kg next heavy`, per:[w60,w60,w60] };
+  return { line:`Max <b>${mx.estimated?'~':''}${M}kg</b>${tag} · <b>3 × ${rt} @ ${w60}kg</b> (60%) · all 3×${rt} → max ${M+inc}kg next heavy`, per:[w60,w60,w60] };
 }
 function protoText(ex){
   const inc=incFor(ex), rt=ex.repTarget||10;
@@ -1335,17 +1342,26 @@ async function goalsCard(){
     card.innerHTML=`<div class="card-top"><div class="ex-name">Goals</div><div class="badge comp">Bodyweight-based</div></div><div class="empty">Log a weigh-in to activate goals.</div>`;
     return card;
   }
-  const e1=(m)=>m*1.1; // tracked 3-rep max → est 1RM
-  const getMax=async(id,inc,rt)=>{ const mx=currentMax(await loadLog(id), inc||5, rt||10); return mx?mx.max:null; };
+  // evidence-based current strength: a heavy-tested max converts 3RM→1RM (×1.1);
+  // a lift never tested heavy uses Epley on its best actual logged set instead
+  const ev=async(id)=>{
+    const log=await loadLog(id);
+    const mx=currentMax(log,5,10);
+    if(mx&&!mx.estimated&&!mx.deload) return {one:mx.max*1.1, three:mx.max, txt:`max ${mx.max}kg`};
+    if(mx&&!mx.estimated&&mx.deload) return {one:mx.max*1.1, three:mx.max, txt:`max ${mx.max}kg (reset)`};
+    let ep=0,bs=null; mergeSessions(log).forEach(e=>{const b=bestSet(e); if(b&&b.w&&b.reps){const v=b.w*(1+b.reps/30); if(v>ep){ep=v;bs=b;}}});
+    if(!ep) return null;
+    return {one:ep, three:ep/1.1, txt:`best ${bs.w}kg × ${bs.reps} (untested)`};
+  };
   const bestV=async(id)=>{ const lg=await loadLog(id); let b=0; lg.forEach(en=>(en.sets||[]).forEach(x=>{if((x.v||0)>b)b=x.v;})); return b; };
   const rows=[];
   const add=(name,target,cur,goal,curTxt)=>{ const pct=(cur!=null&&goal>0)? Math.min(100,cur/goal*100):0; rows.push({name,target,curTxt,pct}); };
-  let m;
-  m=await getMax('incpress'); add('Bench Press','BW × 10', m!=null?e1(m):null, bw*(1+10/30), m!=null?`max ${m}kg · need est 1RM ${Math.round(bw*(1+10/30))}kg`:'no data');
-  m=await getMax('squat');    add('Squat','150% BW × 3', m, 1.5*bw, m!=null?`max ${m}kg / ${Math.round(1.5*bw)}kg`:'no data');
-  m=await getMax('dead');     add('Deadlift','200% BW × 3', m, 2*bw, m!=null?`max ${m}kg / ${Math.round(2*bw)}kg`:'no data');
-  m=await getMax('ohp');      add('Overhead Press','50% BW × 10', m!=null?e1(m):null, 0.5*bw*(1+10/30), m!=null?`max ${m}kg · need est 1RM ${Math.round(0.5*bw*(1+10/30))}kg`:'no data');
-  m=await getMax('row_bb');   add('Barbell Row','50% BW × 25', m!=null?e1(m):null, 0.5*bw*(1+25/30), m!=null?`max ${m}kg`:'log barbell rows to start');
+  let v;
+  v=await ev('incpress'); add('Bench Press','BW × 10', v?v.one:null, bw*(1+10/30), v?`${v.txt} · need est 1RM ${Math.round(bw*(1+10/30))}kg`:'no data');
+  v=await ev('squat');    add('Squat','150% BW × 3', v?v.three:null, 1.5*bw, v?`${v.txt} / ${Math.round(1.5*bw)}kg`:'no data');
+  v=await ev('dead');     add('Deadlift','200% BW × 3', v?v.three:null, 2*bw, v?`${v.txt} / ${Math.round(2*bw)}kg`:'no data');
+  v=await ev('ohp');      add('Overhead Press','50% BW × 10', v?v.one:null, 0.5*bw*(1+10/30), v?`${v.txt} · need est 1RM ${Math.round(0.5*bw*(1+10/30))}kg`:'no data');
+  v=await ev('row_bb');   add('Barbell Row','50% BW × 25', v?v.one:null, 0.5*bw*(1+25/30), v?`${v.txt} · need est 1RM ${Math.round(0.5*bw*(1+25/30))}kg`:'log barbell rows to start');
   const pb=await bestV('pullup');  add('Pull-ups','BW × 10', pb, 10, `${pb} / 10 reps`);
   const db=await bestV('dips_bw'); add('Dips','BW × 25', db, 25, `${db} / 25 reps`);
   const hang=await bestV('pullup_hang'); add('Dead Hang','2:00 hold', hang, 120, `${hang}s / 120s`);
