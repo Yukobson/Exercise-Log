@@ -163,6 +163,30 @@
 
   .toast{position:fixed;left:50%;bottom:22px;transform:translateX(-50%) translateY(80px);background:var(--acid);color:#141a04;font-family:"JetBrains Mono",monospace;font-weight:700;font-size:12px;letter-spacing:.06em;padding:11px 18px;border-radius:11px;z-index:120;opacity:0;transition:.3s;text-transform:uppercase;}
   .toast.show{transform:translateX(-50%) translateY(0);opacity:1;}
+
+  /* daily four + focus exercise */
+  .dly-head{display:flex;align-items:flex-end;justify-content:space-between;gap:10px;margin-top:6px;}
+  .dly-day{font-size:40px;font-weight:800;letter-spacing:-.03em;line-height:1;}
+  .dly-day small{font-family:"JetBrains Mono",monospace;font-size:11px;font-weight:400;letter-spacing:.08em;color:var(--muted);margin-left:6px;}
+  .dly-msg{font-family:"JetBrains Mono",monospace;font-size:11px;line-height:1.5;margin-top:8px;}
+  .dly-row{display:flex;align-items:center;gap:11px;padding:10px 11px;border:1px solid var(--line);border-radius:10px;background:#0e0f0a;cursor:pointer;margin-top:7px;user-select:none;}
+  .dly-row .bx{flex:0 0 22px;height:22px;border-radius:6px;border:1.5px solid #3a3f28;display:grid;place-items:center;color:#141a04;font-weight:800;font-size:13px;}
+  .dly-row .lb{font-size:15px;font-weight:700;letter-spacing:-.01em;}
+  .dly-row .ht{display:block;font-family:"JetBrains Mono",monospace;font-size:10px;color:var(--muted);font-weight:400;margin-top:2px;}
+  .dly-row.on{border-color:var(--acid-dim);background:#1d2112;}
+  .dly-row.on .bx{background:var(--acid);border-color:var(--acid);}
+  .dly-dots{display:flex;gap:4px;margin-top:12px;flex-wrap:wrap;align-items:center;}
+  .dly-dots i{width:14px;height:14px;border-radius:4px;display:inline-block;}
+  .dly-dots .cap{font-family:"JetBrains Mono",monospace;font-size:9px;letter-spacing:.1em;color:var(--muted);text-transform:uppercase;margin-right:4px;}
+  .fseq{display:flex;gap:6px;margin-top:11px;}
+  .fseq div{flex:1;text-align:center;font-family:"JetBrains Mono",monospace;font-size:10px;letter-spacing:.04em;padding:7px 2px;border:1px solid var(--line);border-radius:8px;color:var(--muted);}
+  .fseq .now{border-color:var(--acid);color:var(--ink);font-weight:700;}
+  .fseq .ok{color:var(--acid);border-color:var(--acid-dim);}
+  .fsets{display:grid;grid-template-columns:repeat(5,minmax(0,1fr));gap:6px;margin-top:11px;}
+  .fsets input{text-align:center;padding:11px 2px;}
+  .mrow{display:grid;grid-template-columns:1fr 80px auto;gap:7px;align-items:center;margin-top:8px;font-family:"JetBrains Mono",monospace;font-size:11px;color:var(--muted);}
+  .mrow b{color:var(--acid);font-weight:500;}
+  .mrow .save{padding:10px 12px;font-size:11px;}
 </style>
 </head>
 <body>
@@ -244,7 +268,7 @@ const PLANS = [
 ];
 const CYCLE=['planA','planB','planC'];
 const WEEKDAYS=['Mo','Tu','We','Th','Fr','Sa','Su'];
-const HIKE_PACE_SEC=600; // slower than 10:00/km = hike
+const HIKE_PACE_SEC=720; // slower than 12:00/km = hike
 
 // ---------- storage (localStorage, persists per-device in the browser) ----------
 const mem = {};
@@ -260,9 +284,9 @@ async function sset(key,val){
 }
 
 // ---------- state ----------
-let state = { phase:'volume', manualPhase:null, active:'today', open:{}, variant:{}, runKind:'run' };
+let state = { phase:'volume', manualPhase:null, active:'today', open:{}, variant:{}, runKind:'run', runType:'easy' };
 function logIdFor(ex){ if(!ex.variants) return ex.id; const key=state.variant[ex.id]||ex.variants[0].key; const v=ex.variants.find(x=>x.key===key)||ex.variants[0]; return v.id; }
-async function saveSettings(){ await sset('settings',{phase:state.phase, variant:state.variant, runKind:state.runKind}); }
+async function saveSettings(){ await sset('settings',{phase:state.phase, variant:state.variant, runKind:state.runKind, runType:state.runType}); }
 const logCache = {};
 async function loadLog(id){
   if(logCache[id]) return logCache[id];
@@ -547,7 +571,7 @@ function renderSeg(){
 function allLogKeys(){
   const keys=[];
   PLANS.forEach(p=>p.exercises.forEach(e=>exIds(e).forEach(id=>keys.push(id))));
-  keys.push('run','sat','pushups','pushups_tyson','cindy','carry','extra','weighin');
+  keys.push('run','sat','pushups','pushups_tyson','cindy','carry','extra','weighin','focus_pushups','focus_squats','focus_pullups');
   PLANS.forEach(p=>keys.push('time:'+p.id)); keys.push('time:run');
   return [...new Set(keys)];
 }
@@ -1139,6 +1163,7 @@ function cardioCard(){
       <button data-k="hike" class="${state.runKind==='hike'?'on':''}">Hike</button>
       <button data-k="hiit" class="${state.runKind==='hiit'?'on':''}">HIIT</button>
     </div>
+    <div class="seg mini" data-rtseg style="margin-top:8px">${RUN_TYPES.map(t=>`<button data-t="${t.k}" class="${(state.runType||'easy')===t.k?'on':''}">${t.label}</button>`).join('')}</div>
     <div class="proto">Log distance &amp; time — <b>pace is calculated automatically</b>.</div>
     <div class="last" data-last></div>
     <div class="runrow" style="margin-top:12px;grid-template-columns:1.2fr .8fr .8fr .8fr">
@@ -1148,6 +1173,9 @@ function cardioCard(){
       <div><label class="field-lab">Sec</label><input type="number" inputmode="numeric" placeholder="0" data-sec></div>
     </div>
     <div class="pace"><span class="lab">Pace</span><span class="val" data-pace>—<small> /km</small></span></div>
+    <div class="row2" data-painrow style="grid-template-columns:1fr">
+      <div><label class="field-lab">Foot pain 0 to 10 (during or after)</label><input type="number" inputmode="numeric" min="0" max="10" placeholder="0" data-pain></div>
+    </div>
     <div class="row2">
       <div><label class="field-lab">Date</label><input class="datein" type="date" data-date value="${todayISO()}"></div>
       <button class="save">Save</button>
@@ -1155,6 +1183,12 @@ function cardioCard(){
     <div class="hist-toggle"><span>Progress &amp; history</span><span class="arr">▾</span></div>
     <div class="hist"></div>`;
   const dEl=card.querySelector('[data-d]'), hEl=card.querySelector('[data-hr]'), mEl=card.querySelector('[data-min]'), sEl=card.querySelector('[data-sec]'), pEl=card.querySelector('[data-pace]');
+  const painEl=card.querySelector('[data-pain]');
+  card.querySelectorAll('[data-rtseg] button').forEach(b=>b.onclick=async()=>{
+    state.runType=b.dataset.t; await saveSettings();
+    card.querySelectorAll('[data-rtseg] button').forEach(x=>x.classList.toggle('on',x.dataset.t===state.runType));
+    if(state.runType==='hills'||state.runType==='sprints'){ const L=await longRunInfo(); if(L.unlockIn>0) toast('Hills and sprints unlock in '+L.unlockIn+' days'); }
+  });
   function calc(){
     const dist=parseFloat(dEl.value), sec=(parseInt(hEl.value||0,10)*3600)+(parseInt(mEl.value||0,10)*60)+(parseInt(sEl.value||0,10));
     pEl.innerHTML=(dist>0&&sec>0)?fmtPace(sec/dist)+'<small> /km</small>':'—<small> /km</small>';
@@ -1165,6 +1199,8 @@ function cardioCard(){
     card.querySelector('[data-dlab]').textContent = hiit? 'Calories' : 'Distance (km)';
     dEl.placeholder = hiit? '0' : '0.0';
     card.querySelector('.pace').style.display = hiit? 'none' : '';
+    card.querySelector('[data-rtseg]').style.display = state.runKind==='run'? '' : 'none';
+    card.querySelector('[data-painrow]').style.display = hiit? 'none' : '';
   }
   kindUI();
   card.querySelectorAll('[data-kindseg] button').forEach(b=>b.onclick=async()=>{
@@ -1181,11 +1217,18 @@ function cardioCard(){
     const entry={date, sec, kind:state.runKind};
     if(state.runKind==='hiit'){ if(dist>0) entry.cal=Math.round(dist); }
     else if(dist>0){ entry.distance=dist; entry.pace=sec/dist; }
+    if(state.runKind==='run'){
+      entry.rtype=state.runType||'easy';
+      if(entry.rtype==='long'){ const L=await longRunInfo(); if(L.note.startsWith('Cutback')) entry.cutback=true; }
+    }
+    const pv=parseInt(painEl.value,10);
+    if(state.runKind!=='hiit' && pv>=0 && pv<=10) entry.pain=pv;
     log.push(entry);
     log.sort((a,b)=>a.date<b.date?1:-1);
     await sset('log:run', log);
-    dEl.value=hEl.value=mEl.value=sEl.value=''; calc();
-    toast('Saved ✓'); refreshCardio(card);
+    dEl.value=hEl.value=mEl.value=sEl.value=''; painEl.value=''; calc();
+    toast(entry.pain>3?'Saved. Pain over 3: hold or drop back next run':'Saved ✓'); refreshCardio(card);
+    document.querySelectorAll('[data-runplan]').forEach(el=>el.replaceWith(runPlanCard()));
   };
   card.querySelector('.hist-toggle').onclick=(e)=>{e.currentTarget.classList.toggle('open');card.querySelector('.hist').classList.toggle('open');state.open['run']=card.querySelector('.hist').classList.contains('open');};
   refreshCardio(card);
@@ -1219,7 +1262,9 @@ async function refreshCardio(card){
   log.slice(0,14).forEach(e=>{
     const kk=(e.kind||'run');
     const tagd = kk==='hike'?'<span class="ph g">H</span>':(kk==='hiit'?'<span class="ph h">HI</span>':'<span class="ph v">R</span>');
-    const vtxt = e.pace!=null ? `${e.distance}km · ${fmtDur(e.sec)} · ${fmtPace(e.pace)}/km` : `${e.cal!=null? e.cal+' cal · ':''}${Math.round(e.sec/60)} min`;
+    const rt = e.rtype ? `${e.rtype} · ` : '';
+    const pn = e.pain!=null ? ` · <span style="color:${e.pain>3?'#ff5c5c':'var(--muted)'}">pain ${e.pain}</span>` : '';
+    const vtxt = (e.pace!=null ? `${rt}${e.distance}km · ${fmtDur(e.sec)} · ${fmtPace(e.pace)}/km` : `${e.cal!=null? e.cal+' cal · ':''}${Math.round(e.sec/60)} min`) + pn;
     const row=document.createElement('div'); row.className='entry';
     row.innerHTML=`<div class="dt">${fmtDate(e.date)}${tagd}</div><div class="v">${vtxt} <span class="edx">✎</span><span class="delx">×</span></div>`;
     row.querySelector('.edx').onclick=async()=>{
@@ -1228,8 +1273,11 @@ async function refreshCardio(card){
       card.querySelector('[data-min]').value=Math.floor((e.sec%3600)/60);
       card.querySelector('[data-sec]').value=Math.round(e.sec%60);
       card.querySelector('[data-date]').value=e.date;
-      state.runKind=e.kind||'run'; await saveSettings();
+      painEl.value=e.pain??'';
+      state.runKind=e.kind||'run'; if(e.rtype) state.runType=e.rtype; await saveSettings();
       card.querySelectorAll('[data-kindseg] button').forEach(x=>x.classList.toggle('on',x.dataset.k===state.runKind));
+      card.querySelectorAll('[data-rtseg] button').forEach(x=>x.classList.toggle('on',x.dataset.t===(state.runType||'easy')));
+      kindUI();
       card.querySelector('[data-d]').dispatchEvent(new Event('input'));
       card._edit=e; toast('Editing — Save to update');
     };
@@ -1486,7 +1534,10 @@ async function goalsCard(){
   v=await ev('dead');     add('Deadlift','200% BW × 3', v?v.three:null, 2*bw, v?`${v.txt} · goal set: ${Math.round(2*bw)}kg × 3`:'no data', await demoSet('dead', 2*bw, 3), await liftLight('dead',5,10));
   v=await ev('ohp');      add('Overhead Press','50% BW × 10', v?v.one:null, 0.5*bw*(1+10/30), v?`${v.txt} · goal set: ${Math.round(0.5*bw)}kg × 10`:'no data', await demoSet('ohp', 0.5*bw, 10), await liftLight('ohp',5,10));
   v=await ev('row_bb');   add('Barbell Row','50% BW × 25', v?v.one:null, 0.5*bw*(1+25/30), v?`${v.txt} · goal set: ${Math.round(0.5*bw)}kg × 25`:'log barbell rows to start', await demoSet('row_bb', 0.5*bw, 25), await liftLight('row_bb',5,10));
-  const pb=await bestV('pullup');  add('Pull-ups','BW × 10', pb, 10, `${pb} / 10 reps`, pb>=10, await trackLight('pullup'));
+  const fpu=await focusInfo(FOCUS[2]); const pb=Math.max(await bestV('pullup'), fpu.best||0);
+  const pGoal = pb>=10 ? 25 : 10;
+  add('Pull-ups', pb>=10 ? '10 ✓ · 25 unbroken' : '10 checkpoint → 25', pb, pGoal, `${pb} / ${pGoal} reps${pb>=10?' · checkpoint 10 reached':''}`, pb>=25, fpu.tests.length? await focusLight(FOCUS[2]) : await trackLight('pullup'));
+  for(const f of FOCUS.slice(0,2)){ const fi=await focusInfo(f); add(f.name, f.target+' unbroken', fi.best, f.target, fi.best!=null? `best ${fi.best} / ${f.target}` : 'no test yet', fi.done, await focusLight(f)); }
   const db=await bestV('dips_bw'); add('Dips','BW × 25', db, 25, `${db} / 25 reps`, db>=25, await trackLight('dips_bw'));
   const hang=await bestV('pullup_hang'); add('Dead Hang','2:00 hold', hang, 120, `${hang}s / 120s`, hang>=120, await trackLight('pullup_hang'));
   const cl=await loadLog('carry');
@@ -1572,22 +1623,279 @@ function scoreSection(){
     const runs=rl.filter(e=>(e.kind||'run')==='run'), hikes=rl.filter(e=>e.kind==='hike');
     const bestRun = runs.length? Math.min(...runs.map(e=>e.pace)) : null;
     const pb = pk.length? pk.reduce((a,e)=> e.sec<a.sec? e:a, pk[0]) : null;
-    const rlgt=await runLight(), pklgt=await parkrunLight();
+    const rlgt=await runLight(), pklgt=await parkrunLight(), lri=await longRunInfo(), lrlgt=await longRunLight();
     cc.innerHTML=`<div class="card-top"><div class="ex-name">Cardio</div><div class="badge comp">All time</div></div>
       <div class="entry"><div class="dt">Runs (${runs.length})</div><div class="v">${runs.length?('avg '+fmtPace(agg(runs))+'/km · best '+fmtPace(bestRun)):'—'}${tlDot(rlgt)}</div></div>
       <div class="entry"><div class="dt">Hikes (${hikes.length})</div><div class="v">${hikes.length?('avg '+fmtPace(agg(hikes))+'/km'):'—'}</div></div>
-      <div class="entry"><div class="dt">Parkrun PB</div><div class="v">${pb?(fmtPace(pb.sec)+' · '+fmtPace(pb.pace)+'/km ('+fmtDate(pb.date)+')'):'—'}${tlDot(pklgt)}</div></div>`;
+      <div class="entry"><div class="dt">Parkrun PB</div><div class="v">${pb?(fmtPace(pb.sec)+' · '+fmtPace(pb.pace)+'/km ('+fmtDate(pb.date)+')'):'—'}${tlDot(pklgt)}</div></div>
+      <div class="entry"><div class="dt">Long run</div><div class="v">${lri.longs.length? 'last '+lri.longs[0].distance+' km · next '+lri.target+' km' : 'next '+lri.target+' km'}${tlDot(lrlgt)}</div></div>`;
     wrap.appendChild(cc);
 
-    const pu=await loadLog('pushups');
-    const maxE=pu.find(e=>(e.phase||'heavy')==='heavy'&&e.reps!=null);
     const pc=document.createElement('div'); pc.className='card';
-    const pulgt=await pushLight('pushups');
-    pc.innerHTML=`<div class="card-top"><div class="ex-name">Push-ups</div><div class="badge comp">2:00 max</div></div>
-      <div class="entry"><div class="dt">Max</div><div class="v">${maxE? maxE.reps+' reps ('+fmtDate(maxE.date)+')':'—'}${tlDot(pulgt)}</div></div>`;
+    let frows='';
+    for(const f of FOCUS){ const fi=await focusInfo(f); const fl=await focusLight(f);
+      frows+=`<div class="entry"><div class="dt">${f.name}</div><div class="v"><span style="color:${TLC[fl.c]}">${fi.max!=null? fi.max+' / '+f.target : '—'}</span>${tlDot(fl)}</div></div>`; }
+    const dst=await dailyStatus(), dl=dailyLightOf(dst);
+    pc.innerHTML=`<div class="card-top"><div class="ex-name">Focus &amp; Daily</div><div class="badge comp">Unbroken max</div></div>${frows}
+      <div class="entry"><div class="dt">Daily Four</div><div class="v"><span style="color:${TLC[dl.c]}">day ${dst.day} · best ${dst.best}</span>${tlDot(dl)}</div></div>`;
     wrap.appendChild(pc);
   })();
   return wrap;
+}
+
+// ---------- daily four (day count, keeps going past 75) ----------
+const DAILY_ITEMS=[
+  {k:'push', label:'Focus exercise sets'},
+  {k:'read', label:'Read one chapter'},
+  {k:'ex',   label:'45 min exercise', hint:'Unwell? Swap in mobility, rehab or a walk.'},
+  {k:'diet', label:'No refined sugar or alcohol'},
+];
+function addDaysISO(iso,n){ const d=new Date(iso+'T00:00:00'); d.setDate(d.getDate()+n); return isoLocal(d); }
+async function setDaily(date,k,v){
+  const log=await loadLog('daily');
+  let r=log.find(e=>e.date===date);
+  if(!r){ r={date}; log.push(r); log.sort((a,b)=>a.date<b.date?1:-1); }
+  r[k]=v; await sset('log:daily',log);
+}
+// Rules: green = all four. yellow = one missed. red = two missed, or a yellow straight after a yellow.
+// Red restarts the count at day 1 the next day. Days not ticked at all count as misses.
+async function dailyStatus(){
+  const log=await loadLog('daily'); const today=todayISO();
+  if(!log.length) return {started:false, day:0, best:0, hist:[], last:null};
+  const first=log.reduce((a,e)=>e.date<a?e.date:a, log[0].date);
+  let runStart=first, prev=null, best=0; const hist=[];
+  for(let d=first; d<today; d=addDaysISO(d,1)){
+    const r=log.find(e=>e.date===d)||{};
+    const miss=DAILY_ITEMS.filter(i=>!r[i.k]).length;
+    let c = miss===0?'green':(miss===1?'yellow':'red');
+    if(c==='yellow' && prev==='yellow') c='red';
+    hist.push({date:d,c,miss});
+    if(c==='red'){ best=Math.max(best, daysBetween(runStart,d)); runStart=addDaysISO(d,1); }
+    prev=c;
+  }
+  const day=daysBetween(runStart,today)+1;
+  best=Math.max(best, day-1);
+  return {started:true, day, best, hist, last:hist.length?hist[hist.length-1]:null, runStart};
+}
+function dailyLightOf(st){
+  if(!st.started) return {c:'grey', why:'not started'};
+  if(!st.last) return {c:'green', why:'day 1 under way'};
+  if(st.last.c==='red') return {c:'red', why:'tripped yesterday, count restarted'};
+  if(st.last.c==='yellow') return {c:'yellow', why:'slipped yesterday, today must be green'};
+  return {c:'green', why:'on track'};
+}
+function dailyCard(){
+  const card=document.createElement('div'); card.className='card comp';
+  let view=todayISO();
+  const draw=async()=>{
+    const st=await dailyStatus(), lt=dailyLightOf(st), log=await loadLog('daily');
+    const today=todayISO(), yest=addDaysISO(today,-1);
+    const r=log.find(e=>e.date===view)||{};
+    const cf=await currentFocus();
+    const pushLabel = cf ? `${cf.f.name} sets` : 'Focus exercise maintenance';
+    const msg = !st.started ? 'Tick your first item to start day 1.'
+      : lt.c==='red' ? 'Tripped yesterday. Back to day 1, go again.'
+      : lt.c==='yellow' ? 'Slipped yesterday. Today has to be green.'
+      : 'On track. Tick all four today.';
+    const passed = st.day>75;
+    card.style.borderLeft='4px solid '+TLC[lt.c];
+    card.innerHTML=`<div class="card-top"><div class="ex-name">Daily Four${tlDot(lt)}</div><div class="badge comp">${passed?'75 passed ✓':'Count to 75'}</div></div>
+      <div class="dly-head"><div><div class="dly-day">DAY ${st.started?st.day:0}</div><div class="field-lab" style="margin:5px 0 0">${st.best>0?'best run '+st.best+(st.best===1?' day':' days'):''}</div></div>
+        <div class="seg mini" data-dv style="flex:0 1 190px;min-width:0"><button data-d="${yest}" class="${view===yest?'on':''}">Yesterday</button><button data-d="${today}" class="${view===today?'on':''}">Today</button></div></div>
+      <div class="dly-msg" style="color:${TLC[lt.c]}">${msg}</div>
+      ${DAILY_ITEMS.map(i=>`<div class="dly-row${r[i.k]?' on':''}" data-k="${i.k}" role="button" tabindex="0"><span class="bx">${r[i.k]?'✓':''}</span><span class="lb">${i.k==='push'?pushLabel:i.label}${i.hint?`<span class="ht">${i.hint}</span>`:''}</span></div>`).join('')}
+      <div class="dly-dots"><span class="cap">Last 14</span>${st.hist.slice(-14).map(h=>`<i style="background:${TLC[h.c]}" title="${fmtDate(h.date)}: ${h.miss} missed"></i>`).join('')||'<span class="cap">nothing yet</span>'}</div>
+      <div class="proto">Green: all four. Yellow: one missed, next day must be green. Red: two missed or two yellows in a row, count restarts.</div>`;
+    card.querySelectorAll('[data-dv] button').forEach(b=>b.onclick=()=>{ view=b.dataset.d; draw(); });
+    card.querySelectorAll('.dly-row').forEach(el=>el.onclick=async()=>{ await setDaily(view, el.dataset.k, !r[el.dataset.k]); draw(); });
+  };
+  draw();
+  return card;
+}
+
+// ---------- focus exercise: 100 push ups → 200 squats → 25 pull ups (unbroken) ----------
+const FOCUS=[
+  {id:'pushups', key:'focus_pushups', name:'Push ups', target:100, pct:.5, sets:5, cue:'Body straight, chest to a fist from the floor, breathe in on the way down. Keep sets short of failure on bench and press days.'},
+  {id:'squats',  key:'focus_squats',  name:'Squats',   target:200, pct:.5, sets:5, cue:'Hip crease below the knee, heels down, steady tempo. Easy the day before a long run or hills. Back off if the foot complains.'},
+  {id:'pullups', key:'focus_pullups', name:'Pull ups', target:25, checkpoint:10, pct:.4, sets:5, everyOther:true, cue:'Dead hang to chin over bar, no kipping. Every second day only. Keep it light on row and pulldown days.'},
+];
+async function focusInfo(f){
+  const log=await loadLog(f.key);
+  const tests=log.filter(e=>e.type==='test');
+  const max=tests.length?tests[0].reps:null;
+  const best=tests.length?Math.max(...tests.map(e=>e.reps)):null;
+  return {log, tests, max, best, done: best!=null && best>=f.target};
+}
+async function currentFocus(){ for(const f of FOCUS){ const i=await focusInfo(f); if(!i.done) return {f,i}; } return null; }
+function focusPlan(f,i){
+  const today=todayISO();
+  if(i.max==null) return {kind:'test', text:'Baseline test: one unbroken set, as many as you can with good form. Everything builds from this number.'};
+  const since=daysBetween(i.tests[0].date,today);
+  const doneToday=i.log.some(e=>e.date===today);
+  if(f.everyOther && !doneToday){
+    const lastSets=i.log.find(e=>e.type!=='test');
+    if(lastSets && daysBetween(lastSets.date,today)===1) return {kind:'rest', since, text:'Rest day for pull ups. A couple of dead hangs keeps the habit going.'};
+  }
+  if(f.id==='pullups' && i.max<5) return {kind:'sets', since, sets:[3,3,3,3,3], text:'Max under 5, so slow negatives: jump to the top, lower over 5 seconds. 5 × 3.'};
+  const wk=Math.min(2,Math.floor(since/7));
+  const r=Math.max(1,Math.round(i.max*f.pct)+wk);
+  return {kind:'sets', since, sets:Array(f.sets).fill(r), text:`${f.sets} × ${r}, easy. Finish every set with reps left.${wk?` Includes +${wk} a set since your last test.`:''}`};
+}
+async function focusLight(f){
+  const i=await focusInfo(f); const t=i.tests.map(e=>e.reps);
+  if(!t.length) return {c:'grey', why:'no test yet'};
+  const age=daysBetween(i.tests[0].date,todayISO());
+  if(i.done){
+    if(t[0]<f.target) return {c:'yellow', why:'below goal, keep maintaining'};
+    if(age>35) return {c:'yellow', why:'monthly retest overdue'};
+    return {c:'green', why:'goal met, maintaining'};
+  }
+  if(t.length<2) return {c:'grey', why:'baseline set'};
+  if(t[0]<t[1]) return {c:'red', why:'max dropped'};
+  if(t.length>=3 && t[0]<=t[1] && t[1]<=t[2]) return {c:'red', why:'two retests without improving'};
+  if(t[0]===t[1]) return {c:'yellow', why:'same as last test'};
+  if(age>21) return {c:'yellow', why:'retest overdue'};
+  return {c:'green', why:'new max'};
+}
+async function saveFocus(f, entry){
+  const log=await loadLog(f.key);
+  log.push(entry); log.sort((a,b)=>a.date<b.date?1:-1);
+  await sset('log:'+f.key, log);
+  if(entry.date===todayISO()) await setDaily(entry.date,'push',true);
+}
+function focusCard(){
+  const card=document.createElement('div'); card.className='card pushcard';
+  let mode=null;
+  const draw=async()=>{
+    const cf=await currentFocus();
+    const infos=[]; for(const f of FOCUS) infos.push({f, i:await focusInfo(f)});
+    const seq=`<div class="fseq">${infos.map(x=>`<div class="${x.i.done?'ok':(cf&&cf.f.id===x.f.id?'now':'')}">${x.i.done?'✓ ':''}${x.f.name} ${x.f.target}</div>`).join('')}</div>`;
+    const maint=infos.filter(x=>x.i.done);
+    const maintHtml=maint.length? `<div class="proto" style="margin-top:12px"><b>Maintenance</b>: one set of half the goal twice a week, retest monthly.</div>`+maint.map(x=>{
+      const age=daysBetween(x.i.tests[0].date,todayISO());
+      return `<div class="mrow"><span>${x.f.name} <b>${x.i.max}</b> · ${age>30?'<span style="color:#ffd23c">retest due</span>':'retest in '+(30-age)+'d'}</span><input type="number" inputmode="numeric" placeholder="reps" data-mt="${x.f.id}"><button class="save" data-mb="${x.f.id}">Retest</button></div>`; }).join('') : '';
+    if(!cf){
+      card.style.borderLeft='4px solid '+TLC.green;
+      card.innerHTML=`<div class="card-top"><div class="ex-name">Focus Exercise</div><div class="badge comp">All three done</div></div>${seq}${maintHtml}`;
+      wireMaint(card, infos); return;
+    }
+    const {f,i}=cf, plan=focusPlan(f,i), lt=await focusLight(f);
+    if(mode===null) mode = plan.kind==='test' ? 'test' : 'sets';
+    card.style.borderLeft='4px solid '+TLC[lt.c];
+    const pct=i.max!=null? Math.min(100,i.max/f.target*100):0;
+    const goalTxt = f.checkpoint && (i.best||0)<f.checkpoint ? `${f.checkpoint} checkpoint → ${f.target}` : `${f.target} unbroken`;
+    let status='';
+    if(i.max==null) status='<span>No test yet.</span>';
+    else { const s=plan.since; status=`Max <b>${i.max}</b> <span>(${fmtDate(i.tests[0].date)})</span> · `+(s>21?'<b style="color:#ffd23c">retest overdue</b>':s>=14?'<b>retest available</b>':`<span>retest in ${14-s}d</span>`); }
+    const doneToday=i.log.some(e=>e.date===todayISO());
+    const setsUI = plan.kind==='rest'
+      ? `<div class="proto">${plan.text}</div>`
+      : `<div class="proto">${plan.text}</div><div class="fsets">${(plan.sets||[0,0,0,0,0]).map((t,n)=>`<div><label class="field-lab">Set ${n+1}</label><input type="number" inputmode="numeric" value="${t||''}" data-s="${n}"></div>`).join('')}</div>`;
+    const testUI = `<div class="proto">One unbroken set. Stop when form breaks or you pause at the top for more than a breath.</div>
+      <div><label class="field-lab" style="margin-top:11px">Reps without stopping</label><input type="number" inputmode="numeric" placeholder="0" data-t></div>`;
+    card.innerHTML=`<div class="card-top"><div class="ex-name">Focus · ${f.name}${tlDot(lt)}</div><div class="badge comp">${goalTxt}</div></div>
+      ${seq}
+      <div class="wkbar"><div class="wkbar-fill" style="width:${pct}%;background:${TLC[lt.c]}"></div></div>
+      <div class="last">${status}${doneToday?' · <b>logged today ✓</b>':''}</div>
+      <div class="seg mini" data-fm style="margin-top:11px"><button data-m="sets" class="${mode==='sets'?'on':''}">Today's sets</button><button data-m="test" class="${mode==='test'?'on':''}">Max test</button></div>
+      ${mode==='test'?testUI:setsUI}
+      ${(mode==='test'||plan.kind!=='rest')?`<div class="row2"><div><label class="field-lab">Date</label><input class="datein" type="date" data-date value="${todayISO()}"></div><button class="save" data-save>Log</button></div>`:''}
+      <div class="proto" style="margin-top:10px">${f.cue}</div>
+      ${maintHtml}
+      <div class="hist-toggle"><span>Progress &amp; history</span><span class="arr">▾</span></div><div class="hist"></div>`;
+    card.querySelectorAll('[data-fm] button').forEach(b=>b.onclick=()=>{ mode=b.dataset.m; draw(); });
+    const sv=card.querySelector('[data-save]');
+    if(sv) sv.onclick=async()=>{
+      const date=card.querySelector('[data-date]').value||todayISO();
+      if(mode==='test'){
+        const reps=parseInt(card.querySelector('[data-t]').value,10);
+        if(!(reps>0)){ toast('Enter your reps'); return; }
+        const prevBest=i.best;
+        await saveFocus(f,{date,type:'test',reps});
+        toast(reps>=f.target?`${f.name} ${reps}: goal met ✓`:(prevBest!=null&&reps>prevBest?'New max ✓':'Test saved ✓'));
+        mode=null;
+      } else {
+        const sets=[...card.querySelectorAll('[data-s]')].map(x=>parseInt(x.value,10)).filter(v=>v>0);
+        if(!sets.length){ toast('Enter your sets'); return; }
+        await saveFocus(f,{date,type:'sets',sets});
+        toast('Saved ✓');
+      }
+      render();
+    };
+    wireMaint(card, infos);
+    const ht=card.querySelector('.hist-toggle'), hist=card.querySelector('.hist');
+    ht.onclick=()=>{ ht.classList.toggle('open'); hist.classList.toggle('open'); state.open[f.key]=hist.classList.contains('open'); };
+    if(state.open[f.key]){ ht.classList.add('open'); hist.classList.add('open'); }
+    if(!i.log.length){ hist.innerHTML='<div class="empty">Nothing logged yet.</div>'; return; }
+    const tv=i.tests.slice().reverse().map(e=>e.reps);
+    if(tv.length) hist.appendChild(sparkline(tv, f.name+' max (unbroken)', '#cdff3a', 'reps'));
+    i.log.slice(0,14).forEach(e=>{
+      const row=document.createElement('div'); row.className='entry';
+      const tag=e.type==='test'?'<span class="ph h">MAX</span>':'<span class="ph v">SETS</span>';
+      row.innerHTML=`<div class="dt">${fmtDate(e.date)}${tag}</div><div class="v">${e.type==='test'?e.reps+' reps':e.sets.join(' / ')} <span class="delx">×</span></div>`;
+      row.querySelector('.delx').onclick=async()=>{ const real=await loadLog(f.key); const k=real.indexOf(e); if(k>-1){ real.splice(k,1); await sset('log:'+f.key,real); draw(); } };
+      hist.appendChild(row);
+    });
+  };
+  draw();
+  return card;
+}
+function wireMaint(card, infos){
+  card.querySelectorAll('[data-mb]').forEach(b=>b.onclick=async()=>{
+    const f=FOCUS.find(x=>x.id===b.dataset.mb);
+    const v=parseInt(card.querySelector(`[data-mt="${f.id}"]`).value,10);
+    if(!(v>0)){ toast('Enter your reps'); return; }
+    await saveFocus(f,{date:todayISO(),type:'test',reps:v}); toast('Retest saved ✓'); render();
+  });
+}
+
+// ---------- long run build (post injury) ----------
+const RUN_TYPES=[{k:'easy',label:'Easy'},{k:'long',label:'Long'},{k:'hills',label:'Hills'},{k:'sprints',label:'Sprints'}];
+async function runPlanStart(){ const p=await sget('runplan'); return (p&&p.start)||todayISO(); }
+async function longRunInfo(){
+  const start=await runPlanStart();
+  const runs=(await loadLog('run')).filter(e=>(e.kind||'run')==='run' && e.date>=start);
+  const longs=runs.filter(e=>e.rtype==='long' && e.distance>0);
+  const week=Math.floor(daysBetween(start,todayISO())/7);
+  const rehab=week<6;
+  let target=5, note='First long run of the rebuild.';
+  if(longs.length){
+    const last=longs[0], peak=Math.max(...longs.filter(e=>!e.cutback).map(e=>e.distance), 0)||last.distance;
+    const n=longs.length;
+    if(last.pain!=null && last.pain>3){ target=Math.max(5, Math.round(last.distance)-1); note='Last long run hurt over 3/10. Dropping back a step.'; }
+    else if(n%4===3){ target=Math.max(5, Math.round(peak*0.8)); note='Cutback week. Let the foot catch up.'; }
+    else { const step = rehab ? (n%2===0?1:0) : 1; target=Math.min(32, Math.round(peak)+step); note = step? 'Up 1 km from your longest.' : 'Repeat the distance before stepping up.'; }
+  }
+  return {start, week, rehab, target, note, longs, runs, unlockIn: Math.max(0, 28-daysBetween(start,todayISO()))};
+}
+async function longRunLight(){
+  const {longs, runs}=await longRunInfo();
+  const pained=runs.filter(e=>e.pain!=null);
+  if(pained.length>=2 && pained[0].pain>3 && pained[1].pain>3) return {c:'red', why:'pain over 3/10 two runs in a row'};
+  if(longs.length<2) return {c:'grey', why:'building baseline'};
+  if(longs[0].cutback) return {c:'green', why:'planned cutback'};
+  const today=todayISO();
+  const raised=longs.some((e,idx)=>daysBetween(e.date,today)<=21 && longs.slice(idx+1).every(p=>e.distance>p.distance));
+  if(raised) return {c:'green', why:'long run building'};
+  return {c:'yellow', why:'no increase for 3+ weeks'};
+}
+function runPlanCard(){
+  const card=document.createElement('div'); card.className='card comp'; card.dataset.runplan='1';
+  card.innerHTML='<div class="empty">…</div>';
+  (async()=>{
+    const L=await longRunInfo(), lt=await longRunLight();
+    card.style.borderLeft='4px solid '+TLC[lt.c];
+    const lastPain=L.runs.find(e=>e.pain!=null);
+    const hard = L.unlockIn>0 ? `Easy runs only. Hills and sprints unlock in <b>${L.unlockIn} days</b>.`
+      : L.rehab ? 'Hills and sprints are open if the foot feels normal. Start small, alternate week to week.'
+      : 'Alternate hills and sprints week to week. Race parkrun every second or third week.';
+    card.innerHTML=`<div class="card-top"><div class="ex-name">Long Run Build${tlDot(lt)}</div><div class="badge comp">Week ${L.week+1}</div></div>
+      <div class="rec-main" style="margin-top:8px">${L.target} km</div>
+      <div class="rec-sub">${L.note} Easy pace, able to talk the whole way.<br>${hard}<br>No more than every second day. Parkrun easy for now.</div>
+      <div class="proto">Pain rule: up to 3/10 is OK if it settles by morning. Over that, hold or drop back.${lastPain?` Last score: <b>${lastPain.pain}/10</b> (${fmtDate(lastPain.date)}).`:''}</div>
+      <div class="proto">Checkpoints: 10 km · half marathon · 30 km · marathon.</div>`;
+  })();
+  return card;
 }
 
 // ---------- main render ----------
@@ -1605,7 +1913,7 @@ async function render(){
     c.appendChild(focus);
     c.appendChild(timeCard(plan));
     plan.exercises.forEach(ex=>c.appendChild(cardFor(ex)));
-    c.appendChild(pushupCard());
+    c.appendChild(focusCard());
     return;
   }
 
@@ -1617,6 +1925,7 @@ async function render(){
     const d=new Date();
     focus.innerHTML=`<h2>Today</h2><p>${d.toLocaleDateString('en-AU',{weekday:'long', day:'numeric', month:'short'}).toUpperCase()}</p>`;
     c.appendChild(focus);
+    c.appendChild(dailyCard());
     c.appendChild(weekOverview());
     c.appendChild(recCard());
     const fat=await countDeloads();
@@ -1625,8 +1934,9 @@ async function render(){
     const w=await loadLog('weighin');
     const weighed=w.some(e=>e.date>=start&&e.date<=end);
     if(todayId()==='mon' || !weighed) c.appendChild(weighInCard());
+    c.appendChild(focusCard());
+    c.appendChild(runPlanCard());
     c.appendChild(cardioCard());
-    c.appendChild(pushupCard());
     return;
   }
 
@@ -1651,6 +1961,7 @@ async function render(){
     const focus=document.createElement('div'); focus.className='focus';
     focus.innerHTML=`<h2>Cardio</h2><p>RUNS · HIKES · PARKRUN · CINDY</p>`;
     c.appendChild(focus);
+    c.appendChild(runPlanCard());
     c.appendChild(cardioCard());
     c.appendChild(parkrunCard());
     c.appendChild(cindyCard());
@@ -1693,7 +2004,9 @@ async function doExport(){
       let v=null; if(ex.variants){ const key=state.variant[ex.id]||ex.variants[0].key; v=ex.variants.find(x=>x.key===key)||ex.variants[0]; }
       put(ex.name+(v?' · '+v.label:''), await liftLightFor(ex));
     }}
-    put('Push-ups (Standard)', await pushLight('pushups'));
+    for(const f of FOCUS) put('Focus '+f.name, await focusLight(f));
+    { const ds=await dailyStatus(); const dl=dailyLightOf(ds); traffic['Daily Four']=dl.c+' | day '+ds.day+', best '+ds.best+', '+dl.why; }
+    put('Long run', await longRunLight());
     put('Body composition', await bodyLight());
     put('Runs', await runLight());
     put('Parkrun', await parkrunLight());
@@ -1734,6 +2047,8 @@ document.getElementById('importFile').onchange=(ev)=>{
   if(s&&s.phase) state.phase=s.phase;
   if(s&&s.variant) state.variant=s.variant;
   if(s&&s.runKind) state.runKind=s.runKind;
+  if(s&&s.runType) state.runType=s.runType;
+  if(!(await sget('runplan'))) await sset('runplan',{start:todayISO(), startKm:5});
 
   const mig=await sget('migratedV3');
   if(!mig){
@@ -1744,7 +2059,7 @@ document.getElementById('importFile').onchange=(ev)=>{
       const merged=[...oldT,...oldTh].filter(e=>e&&e.date).sort((a,b)=>a.date<b.date?1:-1);
       if(merged.length){ logCache['run']=merged; await sset('log:run',merged); }
     }
-    // tag run/hike on existing cardio entries (pace slower than 10:00/km = hike)
+    // tag run/hike on existing cardio entries (pace slower than 12:00/km = hike)
     const rl=await loadLog('run');
     let changed=false;
     rl.forEach(e=>{ if(!e.kind){ e.kind = (e.pace>HIKE_PACE_SEC)?'hike':'run'; changed=true; } });
