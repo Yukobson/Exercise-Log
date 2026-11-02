@@ -78,7 +78,7 @@
   .setrow.trk{grid-template-columns:30px 1fr 28px;}
   .setrow .n{font-family:"JetBrains Mono",monospace;font-size:11px;color:var(--muted);text-align:center;}
   .setrow.topset .n{color:var(--acid);font-weight:700;}
-  input,select{font-family:"JetBrains Mono",monospace;background:#0e0f0a;border:1px solid var(--line);color:var(--ink);border-radius:9px;padding:11px 10px;font-size:15px;width:100%;outline:none;}
+  input,select{min-width:0;font-family:"JetBrains Mono",monospace;background:#0e0f0a;border:1px solid var(--line);color:var(--ink);border-radius:9px;padding:11px 10px;font-size:15px;width:100%;outline:none;}
   input:focus{border-color:var(--acid);}
   input::placeholder{color:#54583f;}
   input[readonly]{color:var(--muted);background:#0b0c07;}
@@ -552,7 +552,7 @@ function sparklineRun(vals, caption, color, avgSec){
 }
 
 // ---------- tabs ----------
-const TABS=[{id:'today',label:'Today'},{id:'planA',label:'A'},{id:'planB',label:'B'},{id:'planC',label:'C'},{id:'run',label:'Cardio'},{id:'body',label:'Body'},{id:'score',label:'Score'},{id:'extra',label:'＋EX'}];
+const TABS=[{id:'today',label:'Today'},{id:'planA',label:'A'},{id:'planB',label:'B'},{id:'planC',label:'C'},{id:'run',label:'Cardio'},{id:'body',label:'Body'},{id:'fast',label:'Fast'},{id:'score',label:'Score'},{id:'extra',label:'＋EX'}];
 function renderTabs(){
   const c=document.getElementById('tabs'); c.innerHTML='';
   TABS.forEach(t=>{
@@ -1635,9 +1635,10 @@ function scoreSection(){
     let frows='';
     for(const f of FOCUS){ const fi=await focusInfo(f); const fl=await focusLight(f);
       frows+=`<div class="entry"><div class="dt">${f.name}</div><div class="v"><span style="color:${TLC[fl.c]}">${fi.max!=null? fi.max+' / '+f.target : '—'}</span>${tlDot(fl)}</div></div>`; }
-    const dst=await dailyStatus(), dl=dailyLightOf(dst);
+    const dst=await dailyStatus(), dl=dailyLightOf(dst), fss=await fastStatus(), fsl=await fastLight();
     pc.innerHTML=`<div class="card-top"><div class="ex-name">Focus &amp; Daily</div><div class="badge comp">Unbroken max</div></div>${frows}
-      <div class="entry"><div class="dt">Daily Four</div><div class="v"><span style="color:${TLC[dl.c]}">day ${dst.day} · best ${dst.best}</span>${tlDot(dl)}</div></div>`;
+      <div class="entry"><div class="dt">Daily Four</div><div class="v"><span style="color:${TLC[dl.c]}">day ${dst.day} · best ${dst.best}</span>${tlDot(dl)}</div></div>
+      <div class="entry"><div class="dt">Fasting</div><div class="v"><span style="color:${TLC[fsl.c]}">week ${fss.weekDone?'✓':'·'} · month ${fss.monthDone?'✓':'·'}</span>${tlDot(fsl)}</div></div>`;
     wrap.appendChild(pc);
   })();
   return wrap;
@@ -1898,8 +1899,139 @@ function runPlanCard(){
   return card;
 }
 
+// ---------- fasting: weekly 24 h, monthly 72 h (replaces that week's 24 h) ----------
+const FAST_TYPES={weekly:{label:'Weekly',hours:24}, monthly:{label:'3 day',hours:72}};
+function nowLocalDT(){ const d=new Date(); return isoLocal(d)+'T'+String(d.getHours()).padStart(2,'0')+':'+String(d.getMinutes()).padStart(2,'0'); }
+function fastHours(e){ const end=e.end? new Date(e.end) : new Date(); return Math.max(0,(end-new Date(e.start))/3600000); }
+function fmtHM(h){ const m=Math.round(h*60); return Math.floor(m/60)+'h '+String(m%60).padStart(2,'0')+'m'; }
+function fmtDT(s){ const [d,t]=s.split('T'); return fmtDate(d)+' '+t; }
+function monthKey(iso){ return iso.slice(0,7); }
+function weekStartOf(iso){ const d=new Date(iso+'T00:00:00'); d.setDate(d.getDate()-((d.getDay()+6)%7)); return isoLocal(d); }
+async function fastStatus(){
+  const log=await loadLog('fast'); const today=todayISO();
+  const plan=await sget('fastplan'); const tStart=(plan&&plan.start)||today;
+  const active=log.find(e=>!e.end)||null;
+  const wk=weekStartOf(today), mk=monthKey(today);
+  const startDay=e=>e.start.slice(0,10);
+  const weekDone=log.some(e=>weekStartOf(startDay(e))===wk);
+  const monthDone=log.some(e=>e.type==='monthly' && monthKey(startDay(e))===mk);
+  const prevWk=addDaysISO(wk,-7);
+  const prevWeekMissed = prevWk>=weekStartOf(tStart) && !log.some(e=>weekStartOf(startDay(e))===prevWk);
+  const pm=new Date(today+'T00:00:00'); pm.setDate(1); pm.setMonth(pm.getMonth()-1); const prevMk=monthKey(isoLocal(pm));
+  const prevMonthMissed = prevMk>=monthKey(tStart) && !log.some(e=>e.type==='monthly' && monthKey(startDay(e))===prevMk);
+  const dow=(new Date().getDay()+6)%7; // Mon=0 … Sun=6
+  const weeklyDue = !weekDone && dow>=3;  // from Thursday
+  const last=new Date(today+'T00:00:00'); last.setMonth(last.getMonth()+1,0);
+  const daysLeft=daysBetween(today,isoLocal(last));
+  const monthlyDue = !monthDone && daysLeft<7;
+  return {log, active, weekDone, monthDone, prevWeekMissed, prevMonthMissed, weeklyDue, monthlyDue, daysLeft};
+}
+async function fastLight(){
+  const s=await fastStatus();
+  if(!s.log.length && !s.prevWeekMissed && !s.prevMonthMissed) return {c:'grey', why:'no fasts yet'};
+  if((s.prevWeekMissed && !s.weekDone) || (s.prevMonthMissed && !s.monthDone)) return {c:'red', why: s.prevMonthMissed && !s.monthDone ? 'missed last month\'s 3 day fast' : 'missed last week\'s fast'};
+  if(s.weeklyDue || s.monthlyDue) return {c:'yellow', why: s.monthlyDue ? '3 day fast due this month' : 'weekly fast due'};
+  return {c:'green', why:'on track'};
+}
+async function fastBanner(){
+  const s=await fastStatus(); const msgs=[];
+  if(s.active){ const t=FAST_TYPES[s.active.type]; msgs.push(`Fasting now: <b>${fmtHM(fastHours(s.active))}</b> of ${t.hours}h (${t.label})`); }
+  else {
+    if(s.monthlyDue) msgs.push(`<b>3 day fast due</b>: ${s.daysLeft===0?'last day of the month':s.daysLeft+' day'+(s.daysLeft===1?'':'s')+' left this month'}.`);
+    else if(s.weeklyDue) msgs.push('<b>Weekly fast</b> not done yet this week.');
+  }
+  if(!msgs.length) return null;
+  const lt=await fastLight();
+  const card=document.createElement('div'); card.className='card'; card.style.borderLeft='4px solid '+TLC[s.active?'green':lt.c];
+  card.innerHTML=`<div class="rec-sub" style="color:var(--ink)">${msgs.join('<br>')}</div>`;
+  card.style.cursor='pointer'; card.onclick=()=>{ state.active='fast'; render(); };
+  return card;
+}
+async function saveFastLog(log){ log.sort((a,b)=>a.start<b.start?1:-1); await sset('log:fast',log); }
+function fastSection(){
+  const wrap=document.createElement('div');
+  let ftype='weekly', editing=null;
+  const draw=async()=>{
+    if(window._fastTick){ clearInterval(window._fastTick); window._fastTick=null; }
+    const s=await fastStatus(), lt=await fastLight();
+    wrap.innerHTML='';
+    // status
+    const st=document.createElement('div'); st.className='card comp'; st.style.borderLeft='4px solid '+TLC[lt.c];
+    st.innerHTML=`<div class="card-top"><div class="ex-name">This Week &amp; Month${tlDot(lt)}</div><div class="badge comp">${lt.why}</div></div>
+      <div class="entry"><div class="dt">Weekly fast</div><div class="v" style="color:${s.weekDone?TLC.green:(s.weeklyDue?TLC.yellow:'var(--muted)')}">${s.weekDone?'done ✓':(s.weeklyDue?'due':'not yet')}</div></div>
+      <div class="entry"><div class="dt">3 day fast (${new Date().toLocaleDateString('en-AU',{month:'long'})})</div><div class="v" style="color:${s.monthDone?TLC.green:(s.monthlyDue?TLC.yellow:'var(--muted)')}">${s.monthDone?'done ✓':(s.monthlyDue?'due, '+s.daysLeft+'d left':'not yet')}</div></div>
+      <div class="proto">A 3 day fast counts as that week's fast. Tea, coffee and salt are fine. Targets are a guide, an early finish still counts.</div>`;
+    wrap.appendChild(st);
+    // timer
+    const tc=document.createElement('div'); tc.className='card pushcard';
+    if(s.active){
+      const t=FAST_TYPES[s.active.type];
+      tc.innerHTML=`<div class="card-top"><div class="ex-name">${t.label} fast</div><div class="badge comp">Target ${t.hours}h</div></div>
+        <div class="timer" data-el>${fmtHM(fastHours(s.active))}</div>
+        <div class="wkbar"><div class="wkbar-fill" data-bar style="width:0%"></div></div>
+        <div class="last" data-pct></div>
+        <div class="row2" style="grid-template-columns:1fr"><div><label class="field-lab">Started</label><input type="datetime-local" data-st value="${s.active.start}"></div></div>
+        <div class="row2" style="grid-template-columns:1fr"><div><label class="field-lab">Ended (defaults to now)</label><input type="datetime-local" data-en value=""></div></div>
+        <div class="row2" style="grid-template-columns:1fr 1fr"><button class="tbtn" data-fix>Save start time</button><button class="save" data-end>End fast</button></div>`;
+      const tick=()=>{ const h=fastHours(s.active); tc.querySelector('[data-el]').textContent=fmtHM(h); const p=Math.min(100,h/t.hours*100); tc.querySelector('[data-bar]').style.width=p+'%'; tc.querySelector('[data-pct]').innerHTML=`<b>${Math.round(h/t.hours*100)}%</b> of target · ${h>=t.hours?'target reached ✓':fmtHM(t.hours-h)+' to go'}`; };
+      tick(); window._fastTick=setInterval(tick,30000);
+      tc.querySelector('[data-fix]').onclick=async()=>{ const v=tc.querySelector('[data-st]').value; if(!v||new Date(v)>new Date()){ toast('Start can\'t be in the future'); return; } s.active.start=v; await saveFastLog(s.log); toast('Start time saved ✓'); draw(); };
+      tc.querySelector('[data-end]').onclick=async()=>{ const v=tc.querySelector('[data-en]').value||nowLocalDT(); if(new Date(v)<=new Date(s.active.start)){ toast('End must be after start'); return; } if(new Date(v)>new Date()){ toast('End can\'t be in the future'); return; } s.active.end=v; await saveFastLog(s.log); const h=fastHours(s.active); toast(`Fast ended: ${fmtHM(h)} · ${Math.round(h/t.hours*100)}%`); draw(); };
+    } else {
+      tc.innerHTML=`<div class="card-top"><div class="ex-name">Start a Fast</div><div class="badge comp">${FAST_TYPES[ftype].hours}h target</div></div>
+        <div class="seg mini" data-ft style="margin-top:10px">${Object.entries(FAST_TYPES).map(([k,t])=>`<button data-k="${k}" class="${ftype===k?'on':''}">${t.label} · ${t.hours}h</button>`).join('')}</div>
+        <div class="row2" style="grid-template-columns:1fr"><div><label class="field-lab">Start time (change if you started earlier)</label><input type="datetime-local" data-st value="${nowLocalDT()}"></div></div>
+        <button class="rec-go" data-go>Start fast</button>`;
+      tc.querySelectorAll('[data-ft] button').forEach(b=>b.onclick=()=>{ ftype=b.dataset.k; draw(); });
+      tc.querySelector('[data-go]').onclick=async()=>{ const v=tc.querySelector('[data-st]').value||nowLocalDT(); if(new Date(v)>new Date()){ toast('Start can\'t be in the future'); return; } s.log.push({start:v,end:null,type:ftype}); await saveFastLog(s.log); toast('Fast started'); draw(); };
+    }
+    wrap.appendChild(tc);
+    // add / edit a past fast
+    const mc=document.createElement('div'); mc.className='card';
+    const ev=editing||{type:'weekly',start:'',end:''};
+    mc.innerHTML=`<div class="card-top"><div class="ex-name" style="font-size:15px">${editing?'Edit fast':'Add a past fast'}</div></div>
+      <div class="seg mini" data-mt style="margin-top:10px">${Object.entries(FAST_TYPES).map(([k,t])=>`<button data-k="${k}" class="${ev.type===k?'on':''}">${t.label}</button>`).join('')}</div>
+      <div class="row2" style="grid-template-columns:minmax(0,1fr)"><div><label class="field-lab">Start</label><input type="datetime-local" data-ms value="${ev.start||''}"></div></div><div class="row2" style="grid-template-columns:minmax(0,1fr)"><div><label class="field-lab">End</label><input type="datetime-local" data-me value="${ev.end||''}"></div></div>
+      <div class="row2" style="grid-template-columns:${editing?'1fr 1fr':'1fr'}">${editing?'<button class="tbtn" data-cancel>Cancel</button>':''}<button class="save" data-add>${editing?'Update':'Save'}</button></div>`;
+    let mtype=ev.type;
+    mc.querySelectorAll('[data-mt] button').forEach(b=>b.onclick=()=>{ mtype=b.dataset.k; mc.querySelectorAll('[data-mt] button').forEach(x=>x.classList.toggle('on',x===b)); });
+    if(editing) mc.querySelector('[data-cancel]').onclick=()=>{ editing=null; draw(); };
+    mc.querySelector('[data-add]').onclick=async()=>{
+      const a=mc.querySelector('[data-ms]').value, z=mc.querySelector('[data-me]').value;
+      if(!a||!z){ toast('Enter start and end'); return; }
+      if(new Date(z)<=new Date(a)){ toast('End must be after start'); return; } if(new Date(z)>new Date()){ toast('End can\'t be in the future'); return; }
+      const log=await loadLog('fast');
+      if(editing){ const k=log.indexOf(editing); if(k>-1) log.splice(k,1); }
+      log.push({start:a,end:z,type:mtype}); await saveFastLog(log); editing=null; toast('Saved ✓'); draw();
+    };
+    wrap.appendChild(mc);
+    // history
+    const hc=document.createElement('div'); hc.className='card';
+    const done=s.log.filter(e=>e.end);
+    const statOf=k=>{ const xs=done.filter(e=>e.type===k).map(fastHours); return xs.length? `${xs.length} · avg ${fmtHM(xs.reduce((a,b)=>a+b,0)/xs.length)} · longest ${fmtHM(Math.max(...xs))}` : '—'; };
+    hc.innerHTML=`<div class="card-top"><div class="ex-name">History</div><div class="badge comp">All fasts</div></div>
+      <div class="entry"><div class="dt">Weekly</div><div class="v">${statOf('weekly')}</div></div>
+      <div class="entry"><div class="dt">3 day</div><div class="v">${statOf('monthly')}</div></div><div data-h style="margin-top:10px"></div>`;
+    const hEl=hc.querySelector('[data-h]');
+    if(done.length>1) hEl.appendChild(sparkline(done.slice().reverse().map(e=>Math.round(fastHours(e)*10)/10),'Fast length','#cdff3a','h'));
+    if(!done.length) hEl.innerHTML='<div class="empty">No fasts logged yet.</div>';
+    done.slice(0,20).forEach(e=>{
+      const t=FAST_TYPES[e.type], h=fastHours(e);
+      const row=document.createElement('div'); row.className='entry';
+      row.innerHTML=`<div class="dt">${fmtDT(e.start)}<span class="ph ${e.type==='monthly'?'h':'v'}">${e.type==='monthly'?'3D':'1D'}</span></div><div class="v">${fmtHM(h)} · ${Math.round(h/t.hours*100)}% <span class="edx">✎</span><span class="delx">×</span></div>`;
+      row.querySelector('.edx').onclick=()=>{ editing=e; draw(); window.scrollTo({top:mc.offsetTop-80,behavior:'smooth'}); };
+      row.querySelector('.delx').onclick=async()=>{ const log=await loadLog('fast'); const k=log.indexOf(e); if(k>-1){ log.splice(k,1); await saveFastLog(log); draw(); } };
+      hEl.appendChild(row);
+    });
+    wrap.appendChild(hc);
+  };
+  draw();
+  return wrap;
+}
+
 // ---------- main render ----------
 async function render(){
+  if(window._fastTick){ clearInterval(window._fastTick); window._fastTick=null; }
   renderTabs();
   const c=document.getElementById('content'); c.innerHTML='';
   const plan=PLANS.find(p=>p.id===state.active);
@@ -1925,6 +2057,7 @@ async function render(){
     const d=new Date();
     focus.innerHTML=`<h2>Today</h2><p>${d.toLocaleDateString('en-AU',{weekday:'long', day:'numeric', month:'short'}).toUpperCase()}</p>`;
     c.appendChild(focus);
+    const fb=await fastBanner(); if(fb) c.appendChild(fb);
     c.appendChild(dailyCard());
     c.appendChild(weekOverview());
     c.appendChild(recCard());
@@ -1946,6 +2079,15 @@ async function render(){
     focus.innerHTML=`<h2>Body</h2><p>MONDAY WEIGH-IN · GOAL 12.5% BF</p>`;
     c.appendChild(focus);
     c.appendChild(weighInCard());
+    return;
+  }
+  if(state.active==='fast'){
+    renderSeg();
+    const focus=document.createElement('div'); focus.className='focus';
+    focus.innerHTML=`<h2>Fasting</h2><p>WEEKLY 24H · MONTHLY 3 DAY</p>`;
+    c.appendChild(focus);
+    const fb=await fastBanner(); if(fb){ fb.onclick=null; fb.style.cursor=''; c.appendChild(fb); }
+    c.appendChild(fastSection());
     return;
   }
   if(state.active==='score'){
@@ -2007,6 +2149,7 @@ async function doExport(){
     for(const f of FOCUS) put('Focus '+f.name, await focusLight(f));
     { const ds=await dailyStatus(); const dl=dailyLightOf(ds); traffic['Daily Four']=dl.c+' | day '+ds.day+', best '+ds.best+', '+dl.why; }
     put('Long run', await longRunLight());
+    put('Fasting', await fastLight());
     put('Body composition', await bodyLight());
     put('Runs', await runLight());
     put('Parkrun', await parkrunLight());
@@ -2049,6 +2192,7 @@ document.getElementById('importFile').onchange=(ev)=>{
   if(s&&s.runKind) state.runKind=s.runKind;
   if(s&&s.runType) state.runType=s.runType;
   if(!(await sget('runplan'))) await sset('runplan',{start:todayISO(), startKm:5});
+  if(!(await sget('fastplan'))) await sset('fastplan',{start:todayISO()});
 
   const mig=await sget('migratedV3');
   if(!mig){
